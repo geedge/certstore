@@ -20,6 +20,8 @@
 /* GIT Release */
 #define CERT_GIT_RELEASE "1.1.0"
 
+#define MODE_TYPE(x) run_mode & x
+
 /* Configure Path */
 #if 0
 #define CERT_BASIC_CFG "/usr/local/etc/cert_store.yaml"
@@ -35,16 +37,15 @@ enum syslog_display_format{
     FORMAT_SYSLOG
 };
 
+static int run_mode;
+
 static void help()
 {
-  printf("Welcome to cert server %s\n", cert_revision());
-  printf("cert_server <--debug|--release|--daemon>\n"
+  printf("Welcome to CertStor %s\n", cert_revision());
+  printf("cert_store <--normal|--daemon>\n"
          "Usage:\n"
-         "  --debug      | Run the program in debug mode and display\n"
-         "               | the print message on the interface\n"
-         "  --release    | Run the program in release mode, the interface\n"
-         "               | will not display print message\n"
-         "  --daemon     | Run in daemon mode\n");
+         "  --normal     | Run the program in normal mode\n"
+         "  --daemon     | Run the program in daemon mode\n");
 }
 
 static void
@@ -59,26 +60,33 @@ cert_argv_parser(int argc, char **argv)
 
     for (i = 0; argv[i] != NULL; i++){
 		/** run version parser */
-        if (!STRCMP (argv[i], "--release")){
-            run_mode = 0x00;
+        if (!STRCMP (argv[i], "--normal")){
             goto finish;
         }
-
-		/** decoder configuration parser */
-        if (!STRCMP(argv[i], "--debug")){
-            run_mode = 0x10;
-            goto finish;
-        }
-
         /** daemonize */
         if (!STRCMP(argv[i], "--daemon")){
             run_mode = 0x20;
             goto finish;
         }
     }
-
 finish:
 	return;
+}
+
+static
+void cert_preview ()
+{
+    struct config_bucket_t *rte = cert_default_config();
+
+    printf("\r\nBasic Configuration of CertStore \n");
+    printf("%30s:%45d\n", "The Threads", rte->thread_nu);
+    printf("%30s:%45s\n", "Redis Ip", rte->r_ip);
+    printf("%30s:%45d\n", "Redis Port", rte->r_port);
+    printf("%30s:%45d\n", "Libevent Port", rte->e_port);
+    printf("%30s:%45s\n", "Ca Directory", rte->ca_path);
+    printf("%30s:%45s\n", "Log Directory", logging_sc_lid.run_log_path);
+
+    printf("\r\n");
 }
 
 int main(int argc, char **argv)
@@ -87,13 +95,15 @@ int main(int argc, char **argv)
 
     cert_syslog_init(CERT_BASIC_CFG);
 
+    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Cert server init success\n");
+
+    cert_init_config(CERT_BASIC_CFG);
+
     if (MODE_TYPE(0x20)){
         daemonize();
     }
 
-    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Cert server init success\n");
-
-    cert_init_config(CERT_BASIC_CFG);
+    cert_preview();
 
     cert_session_init();
 

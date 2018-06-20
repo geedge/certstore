@@ -21,9 +21,6 @@
 #define unlikely(expr) __builtin_expect(!!(expr), 0)
 #endif
 
-int run_mode;
-#define MODE_TYPE(x) run_mode & x
-
 #define	__rt_always_inline__	__attribute__((always_inline)) inline
 
 #endif

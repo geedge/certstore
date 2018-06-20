@@ -51,11 +51,7 @@ static int load_system_config(char *config)
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "The signature certificate(%s) does not exist", rte->ca_path);
         goto finish;
     }
-
 finish:
-    printf("rte->thread_nu = %d\n", rte->thread_nu);
-    printf("ca path  (%s)\n", rte->ca_path);
-
     return xret;
 }
 
@@ -82,11 +78,6 @@ static int load_module_config(char *config)
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Redis Port invalid\n");
         goto finish;
     }
-
-    printf("libevent port (%d)\n", rte->e_port);
-    printf("redis ip   (%s)\n", rte->r_ip);
-    printf("redis port (%d)\n", rte->r_port);
-
 finish:
     return xret;
 }

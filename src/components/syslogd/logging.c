@@ -23,25 +23,23 @@
 
 void mesa_logging_print(int log_level, char *module, char *msg)
 {
-
     MESA_handle_runtime_log(logging_sc_lid.run_log_handle, log_level, module, msg);
-
     return;
 }
 
 int mesa_logging_mkfile(char *file, size_t size)
 {
-    char tm[64] = {0};
-    char pname[64]= {0};
+    char tm[24] = {0};
+    char pname[32]= {0};
 
     assert(file);
 
     if (size < 32)
         return -1;
 
-    rt_curr_tms2str(EVAL_TM_STYLE, tm, 63);
+    rt_curr_tms2str(EVAL_TM_STYLE, tm, 23);
     rt_get_pname_by_pid(getpid(), &pname[0]);
-    snprintf(file, 255, "%s-%s-%d-%d-%s.log", pname, getpwuid(getuid())->pw_name, getpwuid(getuid())->pw_uid, getpwuid(getuid())->pw_gid, tm);
+    snprintf(file, 63, "%s-%s-%d-%d-%s.log", pname, getpwuid(getuid())->pw_name, getpwuid(getuid())->pw_uid, getpwuid(getuid())->pw_gid, tm);
 
     return 0;
 }
@@ -55,8 +53,8 @@ void cert_syslog_init(char *config)
     MESA_load_profile_string_def(config, (const char *)"SYSTEM",(const char *)"RUN_LOG_PATH",
                                  logging_sc_lid.run_log_path, 128, NULL);
 
-    char file[32] = {0};
-    mesa_logging_mkfile(file, 32);
+    char file[64] = {0};
+    mesa_logging_mkfile(file, 63);
     STRCAT(logging_sc_lid.run_log_path, file);
 
     logging_sc_lid.run_log_handle = MESA_create_runtime_log_handle(logging_sc_lid.run_log_path, logging_sc_lid.run_log_level);

@@ -41,11 +41,9 @@
 
 #define	SG_DATA_SIZE    2048
 
-//#define DEFAULT_PRIVATEKEY_NAME  "private.key"
-//#define DEFAULT_CA_CERTIFICATE   "ca.cer"
-
-#define DEFAULT_PRIVATEKEY_NAME  "file.key"
-#define DEFAULT_CA_CERTIFICATE   "file.cer"
+#define DEFAULT_PRIVATEKEY_NAME  "private.key"
+#define DEFAULT_CA_CERTIFICATE   "ca.cer"
+#define DEFAULT_PEM_CERTIFICATE  "ca.pem"
 
 void connectCallback(const struct redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
@@ -375,38 +373,30 @@ errout:
 	return NULL;
 }
 
-X509 *X509_load_cert_by_file(char *cert)
+X509 *X509_load_cert_by_file( )
 {
 	BIO *bp = NULL;
-	char *data = NULL;
-    X509* sk = NULL;
+    X509* x = NULL;
+    char cert_path[128] = {0};
 
-	int len = strlen(cert);
+    struct config_bucket_t *rte = cert_default_config();
 
-    data = (char *)malloc(len + 1);
-    if (data == NULL){
+    snprintf(cert_path, sizeof(cert_path), "%s/%s", rte->ca_path, DEFAULT_PEM_CERTIFICATE);
+     /* Read in CA certificate */
+    bp = BIO_new_file(cert_path, "r");
+    if (!bp){
         goto finish;
     }
-	strncpy(data, cert, len + 1);
-
-    if ( (bp=BIO_new(BIO_s_mem())) == NULL){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "unable to create BIO for output\n");
-        free(data);
-        goto finish;
-	}
-	BIO_printf(bp, "%s", data);
-
 	/* This loads from a file, a stack of x509/crl/pkey sets */
-	sk = PEM_read_bio_X509(bp, NULL, NULL, NULL);
-    if (sk == NULL) {
+	x = PEM_read_bio_X509(bp, NULL, NULL, NULL);
+    if (x == NULL) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "error reading the file");
 		goto err;
 	}
 err:
     BIO_free(bp);
-	free(data);
 finish:
-	return sk;
+	return x;
 }
 
 char *openssl_x509_to_str(X509 *crt)
@@ -509,30 +499,26 @@ void redis_async_get_callback(redisAsyncContext *c, void *r, void *privdata)
 
     /* Obtain certificate judgment from redis **/
     if(reply->type == REDIS_REPLY_STRING){
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The Key already exists and sends the certificate information to the requestor");
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Sends the certificate information to the requestor");
         if (reply->str != NULL){
             certCtx->cert = reply->str;
         }
 	}
     if(reply->type == REDIS_REPLY_NIL){
         /* Certificate information modification  and Strategy to judge**/
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Key does not exist, generating certificate information");
-#if 1
-        char *cert = malloc(17);
-        memcpy(cert, "Test Ca to Send\n", 17);
-        certCtx->cert = cert;
-#else
-        X509* ca = X509_load_cert_by_file(certCtx->cert);
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Generating certificate information");
+
+        X509* ca = X509_load_cert_by_file();
         if (!ca){
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to load certificate");
             goto finish;
         }
         X509* now_ca = openssl_x509_modify_by_cert(certCtx->root, certCtx->key, ca,
-                                                   X509_get_pubkey(certCtx->root), NULL, NULL);
+                                                   X509_get_pubkey(certCtx->root), NULL, certCtx->req->host);
         if (now_ca){
             certCtx->cert = openssl_x509_to_str(now_ca);
         }
-#endif
+
         xret = redisAsyncCommand(c, redis_async_set_callback, certCtx->req->host, "SET %s %s", certCtx->req->host, certCtx->cert);
         if (xret < 0){
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to set information to redis server");
@@ -556,12 +542,10 @@ int x509_privatekey_init(struct cert_trapper_t *certCtx)
     snprintf(cert_path, sizeof(cert_path), "%s/%s", rte->ca_path, DEFAULT_CA_CERTIFICATE);
 
 	certCtx->key = EVP_PKEY_new();
-    printf("rte key = %p\n", certCtx->key);
     if (NULL == certCtx->key){
         goto finish;
     }
     rsa = RSA_new();
-    printf("rsa = %p\n", rsa);
     if (NULL == rsa){
         goto pkey_free;
     }
@@ -570,13 +554,11 @@ int x509_privatekey_init(struct cert_trapper_t *certCtx)
     fp = fopen(key_path, "r");
     if (NULL == fp){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", key_path);
-        goto finish;
+        goto rsa_free;
     }
-    printf("fp = %p, certCtx->key = %p, rsa = %p\n", fp, certCtx->key, rsa);
-
     if ( !PEM_read_RSAPrivateKey(fp, &rsa, NULL, NULL) || !EVP_PKEY_assign_RSA(certCtx->key,rsa))
 	{
-        printf("error\n");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Private key read failed");
         goto rsa_free;
 	}
     fclose(fp);
@@ -594,12 +576,14 @@ int x509_privatekey_init(struct cert_trapper_t *certCtx)
     if ( d2i_X509(&certCtx->root, (const unsigned char**)&p, len) == NULL )
     {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Application for x509 failed");
-		goto finish;
+		goto rsa_free;
 	}
     xret = 0;
+    goto finish;
 
 rsa_free:
-    RSA_free(rsa);
+    if (rsa)
+        RSA_free(rsa);
 pkey_free:
     EVP_PKEY_free(certCtx->key);
 
@@ -765,18 +749,15 @@ cert_trapper_task_int(struct event_base *base, int id)
     if (xret < 0){
         __engine_fini_contex(certCtx);
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Initialize the redis connection is failure\n");
-        //goto finish;
+        goto finish;
     }
-#if 0
     /* Initialize the X509 CA*/
     xret = x509_privatekey_init(certCtx);
     if (xret < 0){
         __engine_fini_contex(certCtx);
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the x509 certificate");
-        //goto finish;
+        goto finish;
     }
-#endif
-
 finish:
     return certCtx;
 }
@@ -851,8 +832,9 @@ evhttp_listen_socket_byuser(const struct sockaddr *sa, int socklen,
 	}
 
 	if (flags & LEV_OPT_REUSEABLE_PORT) {
-		if (evutil_make_listen_socket_reuseable_port(fd) < 0)
+		if (evutil_make_listen_socket_reuseable_port(fd) < 0){
 			goto err;
+        }
 	}
 
 	if (sa) {

@@ -47,6 +47,7 @@ struct cert_trapper_t{
 
     EVP_PKEY *key;
 	X509 *root;
+
     char *cert;
 
     struct request_t *req;
