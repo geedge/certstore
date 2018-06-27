@@ -24,7 +24,6 @@
 #include "rt_string.h"
 #include "rt_common.h"
 #include "rt_stdlib.h"
-#include "rt_util.h"
 #include "rt_file.h"
 #include "cert_init.h"
 #include "async.h"
@@ -43,7 +42,6 @@
 
 #define DEFAULT_PRIVATEKEY_NAME  "private.key"
 #define DEFAULT_CA_CERTIFICATE   "ca.cer"
-#define DEFAULT_PEM_CERTIFICATE  "ca.pem"
 
 void connectCallback(const struct redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
@@ -147,7 +145,7 @@ ssl_x509_v3ext_copy_by_nid(X509 *crt, X509 *origcrt, int nid)
 
 X509 *
 openssl_x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, EVP_PKEY *key,
-                    const char *extraname, const char *crlurl)
+                            int days, const char *extraname, const char *crlurl)
 {
 	X509_NAME *subject, *issuer;
 	GENERAL_NAMES *names;
@@ -168,8 +166,8 @@ openssl_x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, EVP_PKE
 	    !X509_set_subject_name(crt, subject) ||
 	    !X509_set_issuer_name(crt, issuer) ||
 	    ssl_x509_serial_copyrand(crt, origcrt) == -1 ||
-	    !X509_gmtime_adj(X509_get_notBefore(crt), (long)-60*60*24) ||
-	    !X509_gmtime_adj(X509_get_notAfter(crt), (long)60*60*24*364) ||
+	    !X509_gmtime_adj(X509_get_notBefore(crt), 0) ||
+	    !X509_time_adj_ex(X509_get_notAfter(crt), days, 0, NULL) ||
 	    !X509_set_pubkey(crt, key))
 		goto errout;
 
@@ -373,32 +371,6 @@ errout:
 	return NULL;
 }
 
-X509 *X509_load_cert_by_file( )
-{
-	BIO *bp = NULL;
-    X509* x = NULL;
-    char cert_path[128] = {0};
-
-    struct config_bucket_t *rte = cert_default_config();
-
-    snprintf(cert_path, sizeof(cert_path), "%s/%s", rte->ca_path, DEFAULT_PEM_CERTIFICATE);
-     /* Read in CA certificate */
-    bp = BIO_new_file(cert_path, "r");
-    if (!bp){
-        goto finish;
-    }
-	/* This loads from a file, a stack of x509/crl/pkey sets */
-	x = PEM_read_bio_X509(bp, NULL, NULL, NULL);
-    if (x == NULL) {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "error reading the file");
-		goto err;
-	}
-err:
-    BIO_free(bp);
-finish:
-	return x;
-}
-
 char *openssl_x509_to_str(X509 *crt)
 {
 	BIO *bp=NULL;
@@ -427,6 +399,166 @@ finish:
 	return buf;
 }
 
+//string?ssl
+X509 *openssl_str_to_x509(char *cert)
+{
+    X509* x = NULL;
+	BIO *bp = NULL;
+    char *in_buf = NULL;
+
+	int len = strlen(cert);
+
+    in_buf = (char *)malloc(len + 1);
+    if (!in_buf)
+        goto finish;
+
+    strncpy(in_buf, cert, len + 1);
+
+    if ( (bp = BIO_new(BIO_s_mem())) == NULL){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "unable to create BIO for output\n");
+        free(in_buf);
+        goto finish;
+    }
+
+	BIO_printf(bp, "%s", in_buf);
+
+	x = PEM_read_bio_X509(bp, NULL, NULL, NULL);
+
+	BIO_free(bp);
+	free(in_buf);
+finish:
+	return x;
+}
+static void callback(int __attribute__((__unused__))p, int __attribute__((__unused__))n,
+                     void __attribute__((__unused__))*arg)
+{
+    return;
+}
+
+/*
+ * Add extension using V3 code: we can set the config file as NULL because we
+ * wont reference any other sections.
+ */
+
+int add_ext(X509 *cert, int nid, char *value)
+{
+    X509_EXTENSION *ex;
+    X509V3_CTX ctx;
+    /* This sets the 'context' of the extensions. */
+    /* No configuration database */
+    X509V3_set_ctx_nodb(&ctx);
+    /*
+     * Issuer and subject certs: both the target since it is self signed, no
+     * request and no CRL
+     */
+    X509V3_set_ctx(&ctx, cert, cert, NULL, NULL, 0);
+    ex = X509V3_EXT_conf_nid(NULL, &ctx, nid, value);
+    if (!ex)
+        return 0;
+
+    X509_add_ext(cert, ex, -1);
+    X509_EXTENSION_free(ex);
+    return 1;
+}
+
+int mkcert(X509 **x509p, EVP_PKEY **pkeyp, int bits,
+           int serial, char *host, int days)
+{
+    X509 *x;
+    EVP_PKEY *pk;
+    RSA *rsa;
+    X509_NAME *name = NULL;
+
+    if ((pkeyp == NULL) || (*pkeyp == NULL)) {
+        if ((pk = EVP_PKEY_new()) == NULL) {
+            abort();
+            return (0);
+        }
+    } else
+        pk = *pkeyp;
+
+    if ((x509p == NULL) || (*x509p == NULL)) {
+        if ((x = X509_new()) == NULL)
+            goto err;
+    } else
+        x = *x509p;
+
+    rsa = RSA_generate_key(bits, RSA_F4, callback, NULL);
+    if (!EVP_PKEY_assign_RSA(pk, rsa)) {
+        abort();
+        goto err;
+    }
+    rsa = NULL;
+
+    X509_set_version(x, 2);
+    ASN1_INTEGER_set(X509_get_serialNumber(x), serial);
+    X509_gmtime_adj(X509_get_notBefore(x), 0);
+    X509_gmtime_adj(X509_get_notAfter(x), (long)60 * 60 * 24 * days);
+    X509_set_pubkey(x, pk);
+
+    name = X509_get_subject_name(x);
+
+    /*
+     * This function creates and adds the entry, working out the correct
+     * string type and performing checks on its length. Normally we'd check
+     * the return value for errors...
+     */
+    X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, (const unsigned char *)"UK", -1, -1, 0);
+    X509_NAME_add_entry_by_txt(name, "CN",
+                               MBSTRING_ASC, (const unsigned char *)host, -1, -1, 0);
+
+    /*
+     * Its self signed so set the issuer name to be the same as the subject.
+     */
+    X509_set_issuer_name(x, name);
+
+    /* Add various extensions: standard extensions */
+    add_ext(x, NID_basic_constraints, "critical,CA:TRUE");
+    add_ext(x, NID_key_usage, "critical,keyCertSign,cRLSign");
+
+    add_ext(x, NID_subject_key_identifier, "hash");
+
+    /* Some Netscape specific extensions */
+    add_ext(x, NID_netscape_cert_type, "sslCA");
+
+    add_ext(x, NID_netscape_comment, "example comment extension");
+
+#ifdef CUSTOM_EXT
+    /* Maybe even add our own extension based on existing */
+    {
+        int nid;
+        nid = OBJ_create("1.2.3.4", "MyAlias", "My Test Alias Extension");
+        X509V3_EXT_add_alias(nid, NID_netscape_comment);
+        add_ext(x, nid, "example comment alias");
+    }
+#endif
+
+    if (!X509_sign(x, pk, EVP_sha1()))
+        goto err;
+
+    *x509p = x;
+    *pkeyp = pk;
+    return (1);
+ err:
+    return (0);
+}
+
+X509 *openssl_creat_cert(char *host, int days)
+{
+    X509 *x509 = NULL;
+    EVP_PKEY *pkey = NULL;
+
+    CRYPTO_mem_ctrl(CRYPTO_MEM_CHECK_ON);
+
+    mkcert(&x509, &pkey, 1024, 0, host, days);
+
+    CRYPTO_cleanup_all_ex_data();
+
+    EVP_PKEY_free(pkey);
+
+    return x509;
+}
+
 int cert_redis_init(struct event_base *base, struct redis_t *redisCtx)
 {
     int xret = -1;
@@ -434,8 +566,7 @@ int cert_redis_init(struct event_base *base, struct redis_t *redisCtx)
     struct config_bucket_t *redis = cert_default_config();
 
     cl_ctx = redisAsyncConnect(redis->r_ip, redis->r_port);
-	if(cl_ctx->err)
-	{
+	if(cl_ctx->err)	{
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Redis Connect error : %s", cl_ctx->errstr);
 		goto finish;
 	}
@@ -490,6 +621,44 @@ done:
     return 0;
 }
 
+static void
+ca_clear_region(struct cert_trapper_t *certCtx, int type)
+{
+    struct request_t *req = certCtx->req;
+
+    req->flag = -1;
+    req->valid = 0;
+    memset(req->host, 0, DATALEN);
+    req->evh_req = NULL;
+
+    if(type == REDIS_REPLY_NIL){
+        kfree(certCtx->cert);
+    }
+}
+
+char *openssl_issued_by_rootCA(char *host, EVP_PKEY *key, X509 *root)
+{
+    char *cert = NULL;
+
+    struct config_bucket_t *rte = cert_default_config();
+
+    X509* ca = openssl_creat_cert(host, rte->days);
+    if (!ca){
+        goto finish;
+    }
+    X509* x509 = openssl_x509_modify_by_cert(root, key, ca, X509_get_pubkey(root),
+                                             rte->days, NULL, NULL);
+    if (!x509){
+        goto finish;
+    }
+    cert = openssl_x509_to_str(x509);
+
+    X509_free(ca);
+    X509_free(x509);
+finish:
+    return cert;
+}
+
 void redis_async_get_callback(redisAsyncContext *c, void *r, void *privdata)
 {
     int xret = -1;
@@ -508,15 +677,11 @@ void redis_async_get_callback(redisAsyncContext *c, void *r, void *privdata)
         /* Certificate information modification  and Strategy to judge**/
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Generating certificate information");
 
-        X509* ca = X509_load_cert_by_file();
-        if (!ca){
-            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to load certificate");
+        certCtx->cert = openssl_issued_by_rootCA(certCtx->req->host, certCtx->key, certCtx->root);
+        if (!certCtx->cert){
+            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to issue certificate");
+            evhttp_send_error(certCtx->req->evh_req, HTTP_BADREQUEST, 0);
             goto finish;
-        }
-        X509* now_ca = openssl_x509_modify_by_cert(certCtx->root, certCtx->key, ca,
-                                                   X509_get_pubkey(certCtx->root), NULL, certCtx->req->host);
-        if (now_ca){
-            certCtx->cert = openssl_x509_to_str(now_ca);
         }
 
         xret = redisAsyncCommand(c, redis_async_set_callback, certCtx->req->host, "SET %s %s", certCtx->req->host, certCtx->cert);
@@ -524,9 +689,9 @@ void redis_async_get_callback(redisAsyncContext *c, void *r, void *privdata)
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to set information to redis server");
         }
     }
-
     evhttp_socket_send(certCtx->req->evh_req, certCtx->cert);
 
+    ca_clear_region(certCtx, reply->type);
 finish:
     return;
 }
@@ -545,6 +710,7 @@ int x509_privatekey_init(struct cert_trapper_t *certCtx)
     if (NULL == certCtx->key){
         goto finish;
     }
+
     rsa = RSA_new();
     if (NULL == rsa){
         goto pkey_free;
@@ -554,19 +720,20 @@ int x509_privatekey_init(struct cert_trapper_t *certCtx)
     fp = fopen(key_path, "r");
     if (NULL == fp){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", key_path);
-        goto rsa_free;
+        RSA_free(rsa);
+        goto pkey_free;
     }
     if ( !PEM_read_RSAPrivateKey(fp, &rsa, NULL, NULL) || !EVP_PKEY_assign_RSA(certCtx->key,rsa))
 	{
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Private key read failed");
-        goto rsa_free;
+        goto pkey_free;
 	}
     fclose(fp);
 
 	fp = fopen(cert_path, "rb");
 	if (NULL == fp){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", cert_path);
-        goto rsa_free;
+        goto pkey_free;
     }
     len = fread(buf, 1, SG_DATA_SIZE * 2, fp);
     fclose(fp);
@@ -576,17 +743,13 @@ int x509_privatekey_init(struct cert_trapper_t *certCtx)
     if ( d2i_X509(&certCtx->root, (const unsigned char**)&p, len) == NULL )
     {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Application for x509 failed");
-		goto rsa_free;
+		goto pkey_free;
 	}
     xret = 0;
     goto finish;
 
-rsa_free:
-    if (rsa)
-        RSA_free(rsa);
 pkey_free:
     EVP_PKEY_free(certCtx->key);
-
 finish:
     return xret;
 }
@@ -595,11 +758,9 @@ finish:
 int cert_session_finish()
 {
     struct cert_trapper_t *rte = cert_default_trapper();
-    struct libevent_t *event = rte->libevent;
     struct redis_t *redis = rte->redis;
 
     redisAsyncDisconnect(redis->cl_ctx);
-    evconnlistener_free(event->listener);
     event_base_free(event->base);
     X509_free(rte->root);
     EVP_PKEY_free(rte->key);

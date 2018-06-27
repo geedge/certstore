@@ -11,7 +11,6 @@
 
 #include "rt_string.h"
 #include "rt_common.h"
-#include "rt_util.h"
 #include "rt_file.h"
 #include "cert_init.h"
 #include "logging.h"
@@ -19,6 +18,7 @@
 
 struct config_bucket_t certConfig = {
     .thread_nu = 1,
+    .days = 30,
     .ca_path = "/usr/local/bin/",
     .e_port = 9995,
     .r_ip = "0.0.0.0",
@@ -39,6 +39,11 @@ static int load_system_config(char *config)
     xret = MESA_load_profile_uint_nodef(config, "CONFIG", "thread-nu", &(rte->thread_nu));
     if (xret < 0){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the number of running threads failed");
+    }
+
+    xret = MESA_load_profile_uint_nodef(config, "CONFIG", "valid-days", &(rte->days));
+    if (xret < 0){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the number of valid time failed");
     }
 
     xret = MESA_load_profile_string_nodef(config, "CONFIG", "ca-path", rte->ca_path, 128);

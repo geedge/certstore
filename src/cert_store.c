@@ -83,6 +83,7 @@ void cert_preview ()
     printf("%30s:%45s\n", "Redis Ip", rte->r_ip);
     printf("%30s:%45d\n", "Redis Port", rte->r_port);
     printf("%30s:%45d\n", "Libevent Port", rte->e_port);
+    printf("%30s:%45d\n", "Ca Valid time", rte->days);
     printf("%30s:%45s\n", "Ca Directory", rte->ca_path);
     printf("%30s:%45s\n", "Log Directory", logging_sc_lid.run_log_path);
 
@@ -104,7 +105,6 @@ int main(int argc, char **argv)
     }
 
     cert_preview();
-
     cert_session_init();
 
     return 0;

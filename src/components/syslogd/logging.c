@@ -12,14 +12,31 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <pwd.h>
+#include <dirent.h>
+#include <ctype.h>
 
 #include "rt_common.h"
 #include "rt_time.h"
-#include "rt_util.h"
 #include "rt_string.h"
 #include "logging.h"
 #include "MESA_prof_load.h"
 #include "MESA_handle_logger.h"
+
+void rt_get_pname_by_pid(pid_t pid, char *task_name)
+{
+#define BUF_SIZE 1024
+    char proc_pid_path[BUF_SIZE];
+    char buf[BUF_SIZE];
+    sprintf(proc_pid_path, "/proc/%d/status", pid);
+    FILE* fp = fopen(proc_pid_path, "r");
+    if(NULL != fp){
+        if( fgets(buf, BUF_SIZE-1, fp)== NULL ){
+            fclose(fp);
+        }
+        fclose(fp);
+        sscanf(buf, "%*s %s", task_name);
+    }
+}
 
 void mesa_logging_print(int log_level, char *module, char *msg)
 {

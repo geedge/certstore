@@ -58,6 +58,8 @@ struct cert_trapper_t{
 struct config_bucket_t{
     unsigned int thread_nu;
 
+    unsigned int days;
+
     char ca_path[128];
 
     uint16_t e_port;    /* libevent prot*/
