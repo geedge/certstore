@@ -631,7 +631,6 @@ evhttp_socket_send(struct evhttp_request *req, char *sendbuf)
     if (sendbuf[0] == '\0'){
         goto err;
     }
-
     evhttp_add_header(evhttp_request_get_output_headers(req),
 		              "Content-Type", "test");
     evbuffer_add_printf(evb, "%s", sendbuf);
@@ -842,39 +841,31 @@ static void __engine_fini_contex(struct cert_trapper_t *certCtx)
     }
 }
 
-///ca?host=www.baidu.com&flag=1&valid=1
-static int get_url_data(const char *uri, char *host,
-                        int *flag, int *valid)
+static int
+libevent_decode_uri(const char *uri, char *host,
+                    int *flag, int *valid)
 {
-    char *str = NULL;
-    char seps[] = " \t\r\n=&";
+    const char *fg = NULL, *vl = NULL;
+    char *decoded_uri = NULL;
+    struct evkeyvalq params;
 
-    char *uri_tp = (char *)malloc(strlen(uri) + 1);
-    if (uri_tp == NULL){
+    decoded_uri = evhttp_decode_uri(uri);
+    if (!decoded_uri){
         goto finish;
     }
-    memcpy(uri_tp, uri, strlen(uri));
+    evhttp_parse_query(decoded_uri, &params);
+    sprintf(host,  "%s", evhttp_find_header(&params, "host"));
 
-    str = strtok(uri_tp + 4, seps);
-    if (!STRCMP(str, "host")){
-        str = strtok(NULL, seps);
-        memcpy(host, str, strlen(str));
-    }
-    while(str != NULL){
-        str = strtok(NULL, seps);
-        if (str && !STRCMP(str, "flag")){
-            str = strtok(NULL, seps);
-            if (str)
-                *flag = atoi(str);
-        }
-        if (str && !STRCMP(str, "valid")){
-            str = strtok(NULL, seps);
-            if (str)
-                *valid = atoi(str);
-        }
-    }
+    fg = evhttp_find_header(&params, "flag");
+    if (fg)
+        *flag = atoi(fg);
 
-    free(uri_tp);
+    vl = evhttp_find_header(&params, "valid");
+    if (vl)
+        *valid = atoi(vl);
+
+    free(decoded_uri);
+
 finish:
     return 0;
 }
@@ -910,7 +901,7 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
 	}
 
     WEB_REQUEST_ADD(1);
-    get_url_data(uri, req->host, &req->flag, &req->valid);
+    libevent_decode_uri(uri, req->host, &req->flag, &req->valid);
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "[Thread %d]Received a %s request for %s, host:%s, flag:%d, valid:%d\nHeaders:",
 	                certCtx->thread_id, cmdtype, uri, req->host,
                     req->flag, req->valid);
