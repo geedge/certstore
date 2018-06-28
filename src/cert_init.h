@@ -46,9 +46,8 @@ struct cert_trapper_t{
     int thread_id;
 
     EVP_PKEY *key;
-	X509 *root;
 
-    char *cert;
+	X509 *root;
 
     struct request_t *req;
 
