@@ -37,6 +37,12 @@ typedef struct {
 
     rt_pthread_attr *attr;
 
+    EVP_PKEY *key;
+
+    X509 *root;
+
+    struct redisAsyncContext *cl_ctx;
+
     void * (*routine)(void *);  /** Executive entry */
 } libevent_thread;
 

@@ -43,6 +43,10 @@
 #define DEFAULT_PRIVATEKEY_NAME  "private.key"
 #define DEFAULT_CA_CERTIFICATE   "ca.cer"
 
+static libevent_thread *threads;
+
+#define sizeof_seconds(x)  (x * 24 * 60 * 60)
+
 void connectCallback(const struct redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Redis connect error : %s\n", c->errstr);
@@ -51,16 +55,62 @@ void connectCallback(const struct redisAsyncContext *c, int status) {
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Redis server connected...\n");
 }
 
-static libevent_thread *threads;
-
-#define sizeof_seconds(x)  (x * 24 * 60 * 60)
-
 void disconnectCallback(const struct redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
         printf("Redis disconnect error: %s\n", c->errstr);
         return;
     }
     printf("Redis server disconnected...\n");
+}
+
+static rt_mutex *mutex_buf = NULL;
+
+static unsigned long pthreads_thread_id(void)
+{
+  return ((unsigned long)pthread_self());
+}
+
+static void pthreads_locking_callback(int mode, int n, const char __attribute__((__unused__))*file,
+                                      int __attribute__((__unused__))line)
+{
+  if(mode & CRYPTO_LOCK)
+    rt_mutex_lock(&(mutex_buf[n]));
+  else
+    rt_mutex_unlock(&(mutex_buf[n]));
+}
+
+int thread_setup(void)
+{
+    int i;
+
+    mutex_buf = malloc(CRYPTO_num_locks() * sizeof(rt_mutex));
+    if(!mutex_buf)
+        return 0;
+
+    for(i = 0;  i < CRYPTO_num_locks();  i++)
+        rt_mutex_init(&(mutex_buf[i]), NULL);
+
+    CRYPTO_set_id_callback(pthreads_thread_id);
+    CRYPTO_set_locking_callback(pthreads_locking_callback);
+    return 1;
+}
+
+int thread_cleanup(void)
+{
+    int i;
+
+    if(!mutex_buf)
+        return 0;
+
+    CRYPTO_set_id_callback(NULL);
+    CRYPTO_set_locking_callback(NULL);
+
+    for(i = 0;  i < CRYPTO_num_locks();  i++)
+        rt_mutex_destroy(&(mutex_buf[i]));
+
+    free(mutex_buf);
+    mutex_buf = NULL;
+    return 1;
 }
 
 int
@@ -144,7 +194,7 @@ ssl_x509_v3ext_copy_by_nid(X509 *crt, X509 *origcrt, int nid)
 }
 
 X509 *
-openssl_x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, EVP_PKEY *key,
+x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, EVP_PKEY *key,
                             int days, const char *extraname, const char *crlurl)
 {
 	X509_NAME *subject, *issuer;
@@ -423,36 +473,6 @@ finish:
 	return;
 }
 
-//string?ssl
-X509 *openssl_str_to_x509(char *cert)
-{
-    X509* x = NULL;
-	BIO *bp = NULL;
-    char *in_buf = NULL;
-
-	int len = strlen(cert);
-
-    in_buf = (char *)malloc(len + 1);
-    if (!in_buf)
-        goto finish;
-
-    strncpy(in_buf, cert, len + 1);
-
-    if ( (bp = BIO_new(BIO_s_mem())) == NULL){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "unable to create BIO for output\n");
-        free(in_buf);
-        goto finish;
-    }
-
-	BIO_printf(bp, "%s", in_buf);
-
-	x = PEM_read_bio_X509(bp, NULL, NULL, NULL);
-
-	BIO_free(bp);
-	free(in_buf);
-finish:
-	return x;
-}
 static void callback(int __attribute__((__unused__))p, int __attribute__((__unused__))n,
                      void __attribute__((__unused__))*arg)
 {
@@ -567,7 +587,7 @@ int mkcert(X509 **x509p, EVP_PKEY **pkeyp, int bits,
     return (0);
 }
 
-X509 *openssl_creat_cert(char *host, int days)
+X509 *x509_create_cert(char *host, int days)
 {
     X509 *x509 = NULL;
     EVP_PKEY *pkey = NULL;
@@ -583,30 +603,27 @@ X509 *openssl_creat_cert(char *host, int days)
     return x509;
 }
 
-int cert_redis_init(struct event_base *base, struct redis_t *redisCtx)
+int cert_redis_init(struct event_base *base, struct redisAsyncContext **cl_ctx)
 {
     int xret = -1;
-    struct redisAsyncContext *cl_ctx = NULL;
     struct config_bucket_t *redis = cert_default_config();
 
-    cl_ctx = redisAsyncConnect(redis->r_ip, redis->r_port);
-	if(cl_ctx->err)	{
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Redis Connect error : %s", cl_ctx->errstr);
+    *cl_ctx = redisAsyncConnect(redis->r_ip, redis->r_port);
+	if((*cl_ctx)->err)	{
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Redis Connect error : %s", (*cl_ctx)->errstr);
 		goto finish;
 	}
-    redisCtx->cl_ctx = cl_ctx;
+	redisLibeventAttach((*cl_ctx), base);
+	redisAsyncSetConnectCallback((*cl_ctx), connectCallback);
+	redisAsyncSetDisconnectCallback((*cl_ctx), disconnectCallback);
     xret = 0;
-
-	redisLibeventAttach(cl_ctx, base);
-	redisAsyncSetConnectCallback(cl_ctx, connectCallback);
-	redisAsyncSetDisconnectCallback(cl_ctx, disconnectCallback);
 
 finish:
 	return xret;
 }
 
 static void
-redis_async_set_callback(redisAsyncContext __attribute__((__unused__))*c, void *r,
+setCallback(redisAsyncContext __attribute__((__unused__))*c, void *r,
                    void *privdata)
 {
     redisReply *reply = (redisReply*)r;
@@ -628,7 +645,7 @@ evhttp_socket_send(struct evhttp_request *req, char *sendbuf)
     /* This holds the content we're sending. */
 	evb = evbuffer_new();
 
-    if (sendbuf[0] == '\0'){
+    if (sendbuf[0] == '\0' && req == NULL){
         goto err;
     }
     evhttp_add_header(evhttp_request_get_output_headers(req),
@@ -657,15 +674,16 @@ release_resources(struct cert_trapper_t *certCtx, char *cert, char *pubkey, int 
 }
 #endif
 
-void openssl_issued_by_rootCA(char *host, EVP_PKEY *key, X509 *root, char *ca_s, char *pubkey)
+int x509_mkcert(char *host, EVP_PKEY *key, X509 *root, char *ca_s, char *pubkey)
 {
+    int xret = -1;
     struct config_bucket_t *rte = cert_default_config();
 
-    X509* ca = openssl_creat_cert(host, rte->days);
+    X509* ca = x509_create_cert(host, rte->days);
     if (!ca){
         goto finish;
     }
-    X509* x509 = openssl_x509_modify_by_cert(root, key, ca, X509_get_pubkey(root),
+    X509* x509 = x509_modify_by_cert(root, key, ca, X509_get_pubkey(root),
                                              rte->days, NULL, NULL);
     if (!x509){
         goto err;
@@ -677,59 +695,76 @@ void openssl_issued_by_rootCA(char *host, EVP_PKEY *key, X509 *root, char *ca_s,
 err:
     X509_free(ca);
 finish:
-    return;
+    return xret;
 }
 
-void redis_async_get_callback(redisAsyncContext *c, void *r, void *privdata)
+int create_x509(struct request_t *request, redisAsyncContext *c, char *sendbuf)
+{
+    int xret = -1;
+
+    libevent_thread *thread = threads + request->thread_id;
+
+    struct config_bucket_t *rte = cert_default_config();
+    char cert[SG_DATA_SIZE] = {0}, pubkey[SG_DATA_SIZE] = {0};
+
+    x509_mkcert(request->host, thread->key, thread->root, cert, pubkey);
+    if (cert[0] == '\0' && pubkey[0] == '\0'){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to issue certificate");
+        evhttp_send_error(request->evh_req, HTTP_BADREQUEST, 0);
+        goto finish;
+    }
+    CA_SIGN_ADD(1);
+    snprintf(sendbuf, SG_DATA_SIZE * 2, "%s%s", pubkey, cert);
+
+    xret = redisAsyncCommand(c, setCallback, request->host, "SETEX %s %d %s",
+                             request->host, sizeof_seconds(rte->days), sendbuf);
+    if (xret < 0){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to set information to redis server");
+        goto finish;
+    }
+     xret = 0;
+finish:
+    return xret;
+}
+
+void getCallback(redisAsyncContext *c, void *r, void *privdata)
 {
     int xret = -1;
     char sendbuf[SG_DATA_SIZE * 2] = {0};
-    char cert[SG_DATA_SIZE] = {0}, pubkey[SG_DATA_SIZE] = {0};
+
 	redisReply *reply = (redisReply*)r;
 
-    struct config_bucket_t *rte = cert_default_config();
-    struct cert_trapper_t *certCtx = (struct cert_trapper_t *)privdata;
+    struct request_t *request = (struct request_t *)privdata;
 
-    struct request_t *req = certCtx->req;
-
-    /* Obtain certificate judgment from redis **/
-    if(reply->type == REDIS_REPLY_STRING){
-        CA_STORE_ADD(1);
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Sends the certificate information to the requestor");
-        if (reply->str != NULL){
-            snprintf(sendbuf, SG_DATA_SIZE * 2, "%s", reply->str);
-        }
-	}
-
-    if(reply->type == REDIS_REPLY_NIL){
-        /* Certificate information modification  and Strategy to judge**/
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Generating certificate information");
-
-        openssl_issued_by_rootCA(req->host, certCtx->key, certCtx->root, cert, pubkey);
-        if (cert[0] == '\0' && pubkey[0] == '\0'){
-            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to issue certificate");
-            evhttp_send_error(req->evh_req, HTTP_BADREQUEST, 0);
-            goto finish;
-        }
-        CA_SIGN_ADD(1);
-        snprintf(sendbuf, SG_DATA_SIZE * 2, "%s%s", pubkey, cert);
-
-        xret = redisAsyncCommand(c, redis_async_set_callback, req->host, "SETEX %s %d %s",
-                                 req->host, sizeof_seconds(rte->days), sendbuf);
-        if (xret < 0){
-            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to set information to redis server");
-        }
+    switch(reply->type){
+        case REDIS_REPLY_STRING:
+            mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Sends the certificate information to the requestor");
+            CA_STORE_ADD(1);
+            if (reply->str != NULL){
+                snprintf(sendbuf, SG_DATA_SIZE * 2, "%s", reply->str);
+                xret = 0;
+            }else{
+                evhttp_send_error(request->evh_req, HTTP_BADREQUEST, 0);
+            }
+            break;
+        case REDIS_REPLY_NIL:
+            /* Certificate information modification  and Strategy to judge**/
+            mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Generating certificate information");
+            xret = create_x509(request, c, sendbuf);
+            break;
+        default:
+            break;
     }
-    evhttp_socket_send(req->evh_req, sendbuf);
+    if (xret < 0)
+        goto finish;
 
-    req->flag = -1;
-    req->valid = 0;
-    memset(req->host, 0, DATALEN);
+    evhttp_socket_send(request->evh_req, sendbuf);
 finish:
+    kfree(request);
     return;
 }
 
-int x509_privatekey_init(struct cert_trapper_t *certCtx)
+int x509_privatekey_init(EVP_PKEY **key, X509 **root)
 {
     int xret = -1, len = 0;
 	FILE *fp; RSA *rsa = NULL;
@@ -739,8 +774,8 @@ int x509_privatekey_init(struct cert_trapper_t *certCtx)
     snprintf(key_path, sizeof(key_path), "%s/%s", rte->ca_path, DEFAULT_PRIVATEKEY_NAME);
     snprintf(cert_path, sizeof(cert_path), "%s/%s", rte->ca_path, DEFAULT_CA_CERTIFICATE);
 
-	certCtx->key = EVP_PKEY_new();
-    if (NULL == certCtx->key){
+	*key = EVP_PKEY_new();
+    if (NULL == *key){
         goto finish;
     }
 
@@ -756,7 +791,7 @@ int x509_privatekey_init(struct cert_trapper_t *certCtx)
         RSA_free(rsa);
         goto pkey_free;
     }
-    if ( !PEM_read_RSAPrivateKey(fp, &rsa, NULL, NULL) || !EVP_PKEY_assign_RSA(certCtx->key,rsa))
+    if ( !PEM_read_RSAPrivateKey(fp, &rsa, NULL, NULL) || !EVP_PKEY_assign_RSA(*key,rsa))
 	{
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Private key read failed");
         goto pkey_free;
@@ -772,8 +807,8 @@ int x509_privatekey_init(struct cert_trapper_t *certCtx)
     fclose(fp);
 
     p = buf;
-    certCtx->root = X509_new();
-    if ( d2i_X509(&certCtx->root, (const unsigned char**)&p, len) == NULL )
+    *root = X509_new();
+    if ( d2i_X509(root, (const unsigned char**)&p, len) == NULL )
     {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Application for x509 failed");
 		goto pkey_free;
@@ -782,7 +817,7 @@ int x509_privatekey_init(struct cert_trapper_t *certCtx)
     goto finish;
 
 pkey_free:
-    EVP_PKEY_free(certCtx->key);
+    EVP_PKEY_free(*key);
 finish:
     return xret;
 }
@@ -802,48 +837,9 @@ int cert_session_finish()
 }
 #endif
 
-static struct cert_trapper_t * __engine_init_contex ()
-{
-    struct cert_trapper_t *certCtx = NULL;
-
-    certCtx = (struct cert_trapper_t *)malloc(sizeof(struct cert_trapper_t));
-    if (certCtx != NULL){
-        certCtx->redis = (struct redis_t *)malloc(sizeof(struct redis_t));
-        if (certCtx->redis == NULL){
-            free(certCtx);
-            certCtx = NULL;
-            goto finish;
-        }
-        certCtx->req = (struct request_t *)malloc(sizeof(struct request_t));
-        if (certCtx->req == NULL){
-            free(certCtx);
-            certCtx = NULL;
-            goto finish;
-        }
-    }
-finish:
-    return certCtx;
-}
-
-static void __engine_fini_contex(struct cert_trapper_t *certCtx)
-{
-    if (certCtx){
-        if (certCtx->redis){
-            free(certCtx->redis);
-            certCtx->redis = NULL;
-        }
-        if (certCtx->req){
-            free(certCtx->req);
-            certCtx->req = NULL;
-        }
-        free(certCtx);
-        certCtx = NULL;
-    }
-}
-
 static int
-libevent_decode_uri(const char *uri, char *host,
-                    int *flag, int *valid)
+sample_decode_uri(const char *uri, char *host,
+           int *flag, int *valid)
 {
     const char *fg = NULL, *vl = NULL;
     char *decoded_uri = NULL;
@@ -874,12 +870,25 @@ void
 pthread_work_proc(struct evhttp_request *evh_req, void *arg)
 {
     int xret = -1;
-	struct evhttp_uri *decoded = NULL;
-	const char *uri = evhttp_request_get_uri(evh_req);
-    struct cert_trapper_t *certCtx = (struct cert_trapper_t *)arg;
-    struct request_t *req = certCtx->req;
-
     const char *cmdtype;
+    struct request_t *request = NULL;
+	struct evhttp_uri *decoded = NULL;
+
+    libevent_thread *thread_info = (libevent_thread *)arg;
+
+	const char *uri = evhttp_request_get_uri(evh_req);
+     /* Decode the URI */
+	decoded = evhttp_uri_parse(uri);
+	if (!decoded) {
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "It's not a good URI. Sending BADREQUEST\n");
+		goto error;
+	}
+	request = (struct request_t *) kmalloc (sizeof(struct request_t), MPF_CLR, -1);
+    if (request != NULL){
+        request->thread_id = thread_info->id;
+        request->evh_req = evh_req;
+    }
+
 	switch (evhttp_request_get_command(evh_req)) {
         case EVHTTP_REQ_GET: cmdtype = "GET"; break;
         case EVHTTP_REQ_POST: cmdtype = "POST"; break;
@@ -892,73 +901,61 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
         case EVHTTP_REQ_PATCH: cmdtype = "PATCH"; break;
         default: cmdtype = "unknown"; break;
 	}
-    /* Decode the URI */
-	decoded = evhttp_uri_parse(uri);
-	if (!decoded) {
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "It's not a good URI. Sending BADREQUEST\n");
-		evhttp_send_error(evh_req, HTTP_BADREQUEST, 0);
-		goto finish;
-	}
 
     WEB_REQUEST_ADD(1);
-    libevent_decode_uri(uri, req->host, &req->flag, &req->valid);
+    sample_decode_uri(uri, request->host, &request->flag, &request->valid);
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "[Thread %d]Received a %s request for %s, host:%s, flag:%d, valid:%d\nHeaders:",
-	                certCtx->thread_id, cmdtype, uri, req->host,
-                    req->flag, req->valid);
+	                request->thread_id, cmdtype, uri, request->host,
+                    request->flag, request->valid);
 
-    if (req->host[0] != '\0'){
-        req->evh_req = evh_req;
-        xret = redisAsyncCommand(certCtx->redis->cl_ctx, redis_async_get_callback, certCtx, "GET %s", req->host);
+    if (request->host[0] != '\0' && request->evh_req != NULL){
+        xret = redisAsyncCommand(thread_info->cl_ctx, getCallback, request, "GET %s", request->host);
         if (xret < 0){
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get information from redis server");
         }
+    }else{
+        kfree(request);
+        evhttp_uri_free(decoded);
+        goto error;
     }
     evhttp_uri_free(decoded);
+    goto finish;
+
+error:
+    evhttp_send_error(evh_req, HTTP_BADREQUEST, 0);
 finish:
     return;
 }
 
-static struct cert_trapper_t *
-cert_trapper_task_int(struct event_base *base, int id)
+static int
+cert_trapper_task_int(struct event_base *base, libevent_thread *me)
 {
     int xret = -1;
 
-    struct cert_trapper_t *certCtx = __engine_init_contex();
-    if (!certCtx){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize context data");
-        goto finish;
-    }
-    certCtx->thread_id = id;
-    memset(certCtx->req->host, 0, 64);
-
     /* Initialize the redis connection*/
-    xret = cert_redis_init(base, certCtx->redis);
-    if (xret < 0){
-        __engine_fini_contex(certCtx);
+    xret = cert_redis_init(base, &me->cl_ctx);
+    if (xret < 0 || !me->cl_ctx){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Initialize the redis connection is failure\n");
         goto finish;
     }
     /* Initialize the X509 CA*/
-    xret = x509_privatekey_init(certCtx);
-    if (xret < 0){
-        __engine_fini_contex(certCtx);
+    xret = x509_privatekey_init(&me->key, &me->root);
+    if (xret < 0 || !me->key || !me->root){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the x509 certificate");
         goto finish;
     }
 finish:
-    return certCtx;
+    return xret;
 }
 
 static void *pthread_worker_libevent(void *arg)
 {
-    libevent_thread *me = (libevent_thread *)arg;
-
-    struct cert_trapper_t *certCtx = NULL;
-    evutil_socket_t accetp_fd = me->accept_fd;
-
+    int xret = -1;
 	struct evhttp *http = NULL;
 	struct event_base *base = NULL;
 	struct evhttp_bound_socket *bound = NULL;
+
+    libevent_thread *thread_info = (libevent_thread *)arg;
 
     struct config_bucket_t *rte = cert_default_config();
 
@@ -967,7 +964,6 @@ static void *pthread_worker_libevent(void *arg)
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Can't allocate event base\n");
         goto finish;
     }
-
     http = evhttp_new(base);
 	if (!http) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "couldn't create evhttp. Exiting.\n");
@@ -975,17 +971,16 @@ static void *pthread_worker_libevent(void *arg)
 	}
 
     /* Context initialization */
-    certCtx = cert_trapper_task_int(base, me->id);
-    if (!certCtx){
+    xret = cert_trapper_task_int(base, thread_info);
+    if (xret < 0){
         goto error;
     }
-    evhttp_set_cb(http, "/ca", pthread_work_proc, certCtx);
+    evhttp_set_cb(http, "/ca", pthread_work_proc, thread_info);
 
-    bound = evhttp_accept_socket_with_handle(http, accetp_fd);
+    bound = evhttp_accept_socket_with_handle(http, thread_info->accept_fd);
     if (bound != NULL) {
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Bound(%p) to port %d - Awaiting connections ... ", bound, rte->e_port);
 	}
-
 	event_base_dispatch(base);
 
 error:
@@ -1083,6 +1078,10 @@ int libevent_socket_init()
         goto finish;
     }
 
+    /*  one way to set the necessary OpenSSL locking callbacks if you want to do
+        multi-threaded transfers with HTTPS/FTPS built to use OpenSSL **/
+    thread_setup();
+
     threads = calloc(thread_nu, sizeof(libevent_thread));
     if (! threads) {
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Can't allocate thread descriptors");
@@ -1108,7 +1107,7 @@ int libevent_socket_init()
 		}
     }
 
-    pthread_t perform;
+    rt_pthread perform;
     long thread_id = 5;
     pthread_create(&perform, NULL, do_perform_monitor, (void *) thread_id);
 
@@ -1119,6 +1118,7 @@ int libevent_socket_init()
         sleep(1);
     }
 
+    thread_cleanup();
 finish:
     return xret;
 }

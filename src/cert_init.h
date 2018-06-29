@@ -15,43 +15,17 @@
 #include <x509.h>
 #include <evp.h>
 
-enum rt_command_type{
-    RT_COMMAND_UKNOWN,
-
-	RT_COMMAND_INSERT,
-	RT_COMMAND_DELETE,
-	RT_COMMAND_CHANGE,
-	RT_COMMAND_SELECT,
-	RT_COMMAND_SET_TIME
-};
-
-struct redis_t{
-    enum rt_command_type type;
-    struct redisAsyncContext *cl_ctx;
-};
-
 struct request_t{
 #define DATALEN 64
     char host[DATALEN];
+
+    int thread_id;
 
     int flag;
 
     int valid;
 
     struct evhttp_request *evh_req;
-};
-
-struct cert_trapper_t{
-
-    int thread_id;
-
-    EVP_PKEY *key;
-
-	X509 *root;
-
-    struct request_t *req;
-
-    struct redis_t *redis;
 };
 
 struct config_bucket_t{
