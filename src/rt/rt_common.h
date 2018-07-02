@@ -1,10 +1,3 @@
-/*
- *   rt_common.h
- *   Created by fengweihao
- *   30 May, 2018
- *   Func: System timer control interface
- */
-
 #ifndef __RT_COMMON_H__
 #define __RT_COMMON_H__
 

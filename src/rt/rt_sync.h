@@ -1,12 +1,3 @@
-/*
-*   sync.h
-*   Created by Tsihang <qihang@semptian.com>
-*   1 June, 2015
-*   Func: System startup synchronous operation interface of SPASR
-*   Personal.Q
-*/
-
-
 #ifndef __SYSTEM_SYNC_H__
 #define __SYSTEM_SYNC_H__
 

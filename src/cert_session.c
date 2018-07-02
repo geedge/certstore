@@ -596,8 +596,6 @@ X509 *x509_create_cert(char *host, int days)
 
     mkcert(&x509, &pkey, 1024, 0, host, days);
 
-    CRYPTO_cleanup_all_ex_data();
-
     EVP_PKEY_free(pkey);
 
     return x509;
@@ -784,7 +782,7 @@ int x509_privatekey_init(EVP_PKEY **key, X509 **root)
         goto pkey_free;
     }
 
-	unsigned char buf[SG_DATA_SIZE * 2],*p;
+	unsigned char buf[SG_DATA_SIZE],*p;
     fp = fopen(key_path, "r");
     if (NULL == fp){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", key_path);
@@ -803,7 +801,7 @@ int x509_privatekey_init(EVP_PKEY **key, X509 **root)
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", cert_path);
         goto pkey_free;
     }
-    len = fread(buf, 1, SG_DATA_SIZE * 2, fp);
+    len = fread(buf, 1, SG_DATA_SIZE, fp);
     fclose(fp);
 
     p = buf;
@@ -860,6 +858,7 @@ sample_decode_uri(const char *uri, char *host,
     if (vl)
         *valid = atoi(vl);
 
+    evhttp_clear_headers(&params);
     free(decoded_uri);
 
 finish:
