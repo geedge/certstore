@@ -22,7 +22,7 @@
 #include "MESA_prof_load.h"
 #include "MESA_handle_logger.h"
 
-void rt_get_pname_by_pid(pid_t pid, char *task_name)
+static void rt_get_pname_by_pid(pid_t pid, char *task_name)
 {
 #define BUF_SIZE 1024
     char proc_pid_path[BUF_SIZE];
@@ -63,6 +63,8 @@ int mesa_logging_mkfile(char *file, size_t size)
 
 void cert_syslog_init(char *config)
 {
+    char run_log_path[256] = {0};
+
     MESA_load_profile_int_def(config, (const char *)"SYSTEM",(const char *)"DEBUG_SWITCH",
                               &logging_sc_lid.debug_switch, 1);
     MESA_load_profile_int_def(config, (const char *)"SYSTEM",(const char *)"RUN_LOG_LEVEL",
@@ -72,9 +74,10 @@ void cert_syslog_init(char *config)
 
     char file[64] = {0};
     mesa_logging_mkfile(file, 63);
-    STRCAT(logging_sc_lid.run_log_path, file);
+    //STRCAT(logging_sc_lid.run_log_path, file);
+    snprintf(run_log_path, 255, "%s/%s", logging_sc_lid.run_log_path, file);
 
-    logging_sc_lid.run_log_handle = MESA_create_runtime_log_handle(logging_sc_lid.run_log_path, logging_sc_lid.run_log_level);
+    logging_sc_lid.run_log_handle = MESA_create_runtime_log_handle(run_log_path, logging_sc_lid.run_log_level);
     if(logging_sc_lid.run_log_handle == NULL){
         printf("Create log runtime_log_handle error, init failed!");
         goto finish;

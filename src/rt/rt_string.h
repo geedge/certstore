@@ -62,5 +62,4 @@ static inline void atomic_set(atomic_t *v, int32_t val)
 {
     v->counter = val;
 }
-
 #endif

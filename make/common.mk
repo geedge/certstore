@@ -32,13 +32,13 @@ STRIP = strip
 OBJDUMP = objdump
 NM = nm
 
-#CPP = g++
+CPP = g++
 
 #  build object directory
 
 OBJ_DIR = obj$(PREFIX)
 
-#OBJ_DIR_CPP = obj$(PREFIX)/cpp
+OBJ_DIR_CPP = obj$(PREFIX)/cpp
 
 #  standard compile line
 
@@ -48,4 +48,4 @@ ASSEMBLE = $(CC) $(ASFLAGS_GLOBAL) $(ASFLAGS_LOCAL) -MD -c -o $@ $<
 
 MYARCHIVE = $(AR) -cr $@ $<
 
-#CPPCOMPILE = $(CPP) $(CFLAGS_GLOBAL) $(CFLAGS_LOCAL) -MD -c -o $@ $<
+CPPCOMPILE = $(CPP) $(CFLAGS_GLOBAL) $(CFLAGS_LOCAL) -MD -c -o $@ $<

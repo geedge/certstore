@@ -40,8 +40,12 @@ dir := ./rt
 include $(dir)/rt.mk
 OBJS += $(OBJS_$(dir))
 
+dir := ./inc
+include $(dir)/inc.mk
+OBJS += $(OBJS_$(dir)) 
+
 LDFLAGS_GLOBAL += -L ./lib -lapps -lcrypto -lssl -levent -lhiredis -lMESA_htable
-LDFLAGS_GLOBAL += -L ./lib -lMESA_htable -lMESA_handle_logger -lMESA_prof_load
+LDFLAGS_GLOBAL += -L ./lib -lMESA_htable -lMESA_field_stat2 -lMESA_handle_logger -lMESA_prof_load
 LDFLAGS_GLOBAL += \
                   -lpthread -lcrypt -lm -lz -ldl -lstdc++
 
