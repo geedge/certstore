@@ -15,6 +15,8 @@
 #include <x509.h>
 #include <evp.h>
 
+#include "rd_lock.h"
+
 struct request_t{
 #define DATALEN 64
     char host[DATALEN];
@@ -24,6 +26,8 @@ struct request_t{
     int flag;
 
     int valid;
+
+    struct rd_lock_scb mtx;
 
     struct evhttp_request *evh_req;
 };

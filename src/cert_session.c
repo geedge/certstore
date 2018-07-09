@@ -25,6 +25,7 @@
 #include "rt_common.h"
 #include "rt_stdlib.h"
 #include "rt_file.h"
+#include "rt_time.h"
 #include "cert_init.h"
 #include "async.h"
 #include "read.h"
@@ -47,7 +48,7 @@
 static libevent_thread *threads;
 
 struct fs_stats_t{
-    int line_ids[3];
+    int line_ids[4];
     screen_stat_handle_t handle;
 };
 
@@ -57,6 +58,11 @@ static struct fs_stats_t SGstats = {
 };
 
 #define sizeof_seconds(x)  (x * 24 * 60 * 60)
+
+rt_mutex entries_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+uint64_t startTime = 0;
+uint64_t endTime = 0;
 
 void connectCallback(const struct redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
@@ -562,7 +568,19 @@ X509 *x509_create_cert(char *host, int days)
     return x509;
 }
 
-int cert_redis_init(struct event_base *base, struct redisAsyncContext **cl_ctx)
+int redis_sync_int(struct redisContext **c)
+{
+    struct config_bucket_t *redis = cert_default_config();
+
+    struct timeval timeout = { 1, 500000 }; // 1.5 seconds
+
+    *c = redisConnectWithTimeout(redis->r_ip, redis->r_port, timeout);
+
+    return 0;
+}
+
+
+int redis_rsync_init(struct event_base *base, struct redisAsyncContext **cl_ctx)
 {
     int xret = -1;
     struct config_bucket_t *redis = cert_default_config();
@@ -587,10 +605,18 @@ rd_set_callback(redisAsyncContext __attribute__((__unused__))*c, void *r,
 {
     redisReply *reply = (redisReply*)r;
 
-    char *host = (char *)privdata;
+    struct request_t *request = (struct request_t *)privdata;
+
+#ifdef RD_MUTEX_LOCK
+    libevent_thread *thread = threads + request->thread_id;
+    rd_mutex_unlock(&request->mtx, thread->sync);
+#endif
+
     if(reply->type == REDIS_REPLY_ERROR){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Writing data(key = %s) to redis failed", host);
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Writing data(key = %s) to redis failed", request->host);
     }
+
+    kfree(request);
     return;
 }
 
@@ -657,16 +683,42 @@ finish:
     return xret;
 }
 
+static int fs_internal_operate(int id, int id2, int column_id, int column_id2, long long diffTime)
+{
+    int ret = -1, value = -1;
+    screen_stat_handle_t handle = SGstats.handle;
+
+    FS_internal_operate(handle, id, column_id, FS_OP_ADD, 1);
+
+    if (id2 < 0)
+        goto finish;
+
+    FS_internal_operate(handle, id2, 0, FS_OP_ADD, 1);
+
+    if (column_id2 < 0)
+        goto finish;
+
+	value = FS_internal_operate(handle, id, column_id, FS_OP_GET, 0);
+	if (value < 0)
+		goto finish;
+
+	ret = FS_internal_operate(handle, id, column_id2, FS_OP_SET, diffTime/value);
+finish:
+    return ret;
+}
+
 static int
-rd_decode_sendbuf(struct request_t *request, redisAsyncContext *c, char *sendbuf)
+rd_encode_sendbuf(struct request_t *request, redisAsyncContext *c, char *sendbuf)
 {
     int xret = -1;
+    uint64_t startTime = 0, endTime = 0;
 
     libevent_thread *thread = threads + request->thread_id;
 
     struct config_bucket_t *rte = cert_default_config();
     char cert[SG_DATA_SIZE] = {0}, pubkey[SG_DATA_SIZE] = {0};
 
+    startTime = rt_time_ms();
     x509_online_append(request->host, thread->key, thread->root, cert, pubkey);
     if (cert[0] == '\0' && pubkey[0] == '\0'){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to issue certificate");
@@ -674,36 +726,44 @@ rd_decode_sendbuf(struct request_t *request, redisAsyncContext *c, char *sendbuf
         goto finish;
     }
 
-    FS_internal_operate(SGstats.handle,thread->column_ids,thread->field_ids,SGstats.line_ids[2], FS_OP_ADD, 1);
+    endTime = rt_time_ms();
+    thread->diffTime += (endTime - startTime);
+    //printf("%lu - %lu = %lu(%lu)\n", startTime, endTime, endTime - startTime, thread->diffTime);
+    fs_internal_operate(thread->column_ids, thread->field_ids, SGstats.line_ids[2], SGstats.line_ids[3], thread->diffTime);
 
     snprintf(sendbuf, SG_DATA_SIZE * 2, "%s%s", pubkey, cert);
 
-    xret = redisAsyncCommand(c, rd_set_callback, request->host, "SETEX %s %d %s",
+    xret = redisAsyncCommand(c, rd_set_callback, request, "SETEX %s %d %s",
                              request->host, sizeof_seconds(rte->days), sendbuf);
     if (xret < 0){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to set information to redis server");
         goto finish;
     }
-
     xret = 0;
 finish:
     return xret;
 }
 
 static int
-rd_encode_sendbuf(struct request_t *request, redisReply *reply, char *sendbuf)
+rd_decode_sendbuf(struct request_t *request, redisReply *reply, char *sendbuf)
 {
     int xret = -1;
     libevent_thread *thread = threads + request->thread_id;
+#ifdef RD_MUTEX_LOCK
+    rd_mutex_unlock(&request->mtx, thread->sync);
+#endif
 
     if (reply && reply->str){
-        FS_internal_operate(SGstats.handle,thread->column_ids,thread->field_ids,SGstats.line_ids[1],FS_OP_ADD,1);
+        fs_internal_operate(thread->column_ids,thread->field_ids, SGstats.line_ids[1], -1, 0);
+
         snprintf(sendbuf, SG_DATA_SIZE * 2, "%s", reply->str);
         xret = 0;
     }
     else{
         evhttp_send_error(request->evh_req, HTTP_BADREQUEST, 0);
     }
+
+    kfree(request);
     return xret;
 }
 
@@ -720,14 +780,14 @@ void rd_get_callback(redisAsyncContext *c, void *r, void *privdata)
         case REDIS_REPLY_STRING:
             mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Sends the certificate information to the requestor");
 
-            xret = rd_encode_sendbuf(request, reply, sendbuf);
+            xret = rd_decode_sendbuf(request, reply, sendbuf);
             break;
 
         case REDIS_REPLY_NIL:
             /* Certificate information modification  and Strategy to judge**/
             mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Generating certificate information");
 
-            xret = rd_decode_sendbuf(request, c, sendbuf);
+            xret = rd_encode_sendbuf(request, c, sendbuf);
             break;
         default:
             break;
@@ -737,7 +797,7 @@ void rd_get_callback(redisAsyncContext *c, void *r, void *privdata)
 
     evhttp_socket_send(request->evh_req, sendbuf);
 finish:
-    kfree(request);
+    //kfree(request);
     return;
 }
 
@@ -893,7 +953,7 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
         case EVHTTP_REQ_PATCH: cmdtype = "PATCH"; break;
         default: cmdtype = "unknown"; break;
 	}
-    FS_internal_operate(SGstats.handle,thread_info->column_ids,-1,SGstats.line_ids[0], FS_OP_ADD, 1);
+    fs_internal_operate(thread_info->column_ids, -1, SGstats.line_ids[0], -1, 0);
 
     rt_decode_uri(uri, request->host, &request->flag, &request->valid);
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "[Thread %d]Received a %s request for %s, host:%s, flag:%d, valid:%d\nHeaders:",
@@ -901,7 +961,9 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
                     request->flag, request->valid);
 
     if (request->host[0] != '\0' && request->evh_req != NULL){
-
+#ifdef RD_MUTEX_LOCK
+        rd_mutex_lock("key", 30, &request->mtx, thread_info->sync);
+#endif
         xret = redisAsyncCommand(thread_info->cl_ctx, rd_get_callback, request, "GET %s", request->host);
         if (xret < 0)
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get information from redis server");
@@ -927,11 +989,14 @@ cert_trapper_task_int(struct event_base *base, libevent_thread *me)
     int xret = -1;
 
     /* Initialize the redis connection*/
-    xret = cert_redis_init(base, &me->cl_ctx);
+    xret = redis_rsync_init(base, &me->cl_ctx);
     if (xret < 0 || !me->cl_ctx){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Initialize the redis connection is failure\n");
         goto finish;
     }
+
+    xret = redis_sync_int(&me->sync);
+
     /* Initialize the X509 CA*/
     xret = x509_privatekey_init(&me->key, &me->root);
     if (xret < 0 || !me->key || !me->root){
@@ -1064,6 +1129,9 @@ libevent_socket_init()
         goto finish;
     }
 
+    /*mutex init **/
+    rd_lock_init();
+
     threads = calloc(thread_nu, sizeof(libevent_thread));
     if (! threads) {
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Can't allocate thread descriptors");
@@ -1147,6 +1215,9 @@ fs_screen_init()
 
     snprintf(buff,sizeof(buff),"%s", "sign");
     SGstats.line_ids[2] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
+
+    snprintf(buff,sizeof(buff),"%s", "ssl(ms)");
+    SGstats.line_ids[3] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
 
 	FS_internal_start(SGstats.handle);
 
