@@ -22,7 +22,6 @@ struct rd_RedLock{
     sds   m_unlockScript;
     int   m_retryCount;
     int   m_retryDelay;
-    char *m_continueLockScript;
 };
 
 static struct rd_RedLock redlock = {
@@ -30,7 +29,6 @@ static struct rd_RedLock redlock = {
     .m_unlockScript = NULL,
     .m_retryCount = 0,
     .m_retryDelay = 0,
-    .m_continueLockScript = NULL,
 };
 
 struct rd_RedLock *mutx_redlock()
@@ -195,9 +193,8 @@ void rd_lock_init()
 {
     struct rd_RedLock *rdlock = mutx_redlock();
 
-    rdlock->m_continueLockScript = sdsnew("if redis.call('get', KEYS[1]) == ARGV[1] then redis.call('del', KEYS[1]) end return redis.call('set', KEYS[1], ARGV[2], 'px', ARGV[3], 'nx')");
     rdlock->m_unlockScript       = sdsnew("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end");
-    rdlock->m_retryCount = 8;
+    rdlock->m_retryCount = 3;
     rdlock->m_retryDelay = 10;
     rdlock->m_clockDriftFactor = 0.01;
 

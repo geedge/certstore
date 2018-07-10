@@ -17,6 +17,9 @@ extern "C" int FS_internal_register(screen_stat_handle_t handle,enum field_dsp_s
 						 			enum field_calc_algo calc_type,const char* name);
 extern "C" int FS_internal_operate(screen_stat_handle_t handle,int id,int column_id,enum field_op op,long long value);
 
+extern "C" int FS_internal_register_ratio(screen_stat_handle_t handle,int numerator_id,int denominator_id,int scaling,
+				      		   enum field_dsp_style_t style,enum field_calc_algo calc_type,const char* name);
+
 screen_stat_handle_t FS_internal_create_handle(void)
 {
 	return FS_create_handle();
@@ -41,5 +44,11 @@ int FS_internal_register(screen_stat_handle_t handle,enum field_dsp_style_t styl
 int FS_internal_operate(screen_stat_handle_t handle,int id,int column_id,enum field_op op,long long value)
 {
 	return FS_operate(handle, id, column_id, op, value);
+}
+
+int FS_internal_register_ratio(screen_stat_handle_t handle,int numerator_id,int denominator_id,int scaling,
+				      		   enum field_dsp_style_t style,enum field_calc_algo calc_type,const char* name)
+{
+	return FS_register_ratio(handle, numerator_id, denominator_id, scaling, style, calc_type, name);
 }
 

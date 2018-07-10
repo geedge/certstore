@@ -61,9 +61,6 @@ static struct fs_stats_t SGstats = {
 
 rt_mutex entries_mtx = PTHREAD_MUTEX_INITIALIZER;
 
-uint64_t startTime = 0;
-uint64_t endTime = 0;
-
 void connectCallback(const struct redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Redis connect error : %s\n", c->errstr);
@@ -685,7 +682,7 @@ finish:
 
 static int fs_internal_operate(int id, int id2, int column_id, int column_id2, long long diffTime)
 {
-    int ret = -1, value = -1;
+    int ret = -1;
     screen_stat_handle_t handle = SGstats.handle;
 
     FS_internal_operate(handle, id, column_id, FS_OP_ADD, 1);
@@ -698,11 +695,7 @@ static int fs_internal_operate(int id, int id2, int column_id, int column_id2, l
     if (column_id2 < 0)
         goto finish;
 
-	value = FS_internal_operate(handle, id, column_id, FS_OP_GET, 0);
-	if (value < 0)
-		goto finish;
-
-	ret = FS_internal_operate(handle, id, column_id2, FS_OP_SET, diffTime/value);
+	ret = FS_internal_operate(handle, id, column_id2, FS_OP_SET, diffTime);
 finish:
     return ret;
 }
@@ -784,7 +777,6 @@ void rd_get_callback(redisAsyncContext *c, void *r, void *privdata)
             break;
 
         case REDIS_REPLY_NIL:
-            /* Certificate information modification  and Strategy to judge**/
             mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Generating certificate information");
 
             xret = rd_encode_sendbuf(request, c, sendbuf);
@@ -797,7 +789,6 @@ void rd_get_callback(redisAsyncContext *c, void *r, void *privdata)
 
     evhttp_socket_send(request->evh_req, sendbuf);
 finish:
-    //kfree(request);
     return;
 }
 
@@ -943,14 +934,6 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
 
 	switch (evhttp_request_get_command(evh_req)) {
         case EVHTTP_REQ_GET: cmdtype = "GET"; break;
-        case EVHTTP_REQ_POST: cmdtype = "POST"; break;
-        case EVHTTP_REQ_HEAD: cmdtype = "HEAD"; break;
-        case EVHTTP_REQ_PUT: cmdtype = "PUT"; break;
-        case EVHTTP_REQ_DELETE: cmdtype = "DELETE"; break;
-        case EVHTTP_REQ_OPTIONS: cmdtype = "OPTIONS"; break;
-        case EVHTTP_REQ_TRACE: cmdtype = "TRACE"; break;
-        case EVHTTP_REQ_CONNECT: cmdtype = "CONNECT"; break;
-        case EVHTTP_REQ_PATCH: cmdtype = "PATCH"; break;
         default: cmdtype = "unknown"; break;
 	}
     fs_internal_operate(thread_info->column_ids, -1, SGstats.line_ids[0], -1, 0);
@@ -962,7 +945,7 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
 
     if (request->host[0] != '\0' && request->evh_req != NULL){
 #ifdef RD_MUTEX_LOCK
-        rd_mutex_lock("key", 30, &request->mtx, thread_info->sync);
+        rd_mutex_lock(request->host, 30, &request->mtx, thread_info->sync);
 #endif
         xret = redisAsyncCommand(thread_info->cl_ctx, rd_get_callback, request, "GET %s", request->host);
         if (xret < 0)
@@ -973,7 +956,6 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
         evhttp_uri_free(decoded);
         goto error;
     }
-
     evhttp_uri_free(decoded);
     goto finish;
 
@@ -994,7 +976,6 @@ cert_trapper_task_int(struct event_base *base, libevent_thread *me)
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Initialize the redis connection is failure\n");
         goto finish;
     }
-
     xret = redis_sync_int(&me->sync);
 
     /* Initialize the X509 CA*/
@@ -1207,18 +1188,23 @@ fs_screen_init()
 	value=3;
 	FS_internal_set_para(SGstats.handle, STAT_CYCLE, &value, sizeof(value));
 
-    snprintf(buff,sizeof(buff),"%s", "req");
+    snprintf(buff,sizeof(buff),"%s", "http-get");
     SGstats.line_ids[0] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
 
-    snprintf(buff,sizeof(buff),"%s", "store");
+    snprintf(buff,sizeof(buff),"%s", "local-storage");
     SGstats.line_ids[1] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
 
-    snprintf(buff,sizeof(buff),"%s", "sign");
+    snprintf(buff,sizeof(buff),"%s", "generate-cert");
     SGstats.line_ids[2] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
 
-    snprintf(buff,sizeof(buff),"%s", "ssl(ms)");
+    snprintf(buff,sizeof(buff),"%s", "take-time");
     SGstats.line_ids[3] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
 
+    snprintf(buff,sizeof(buff),"average-time");
+    FS_internal_register_ratio(SGstats.handle, SGstats.line_ids[3],
+                               SGstats.line_ids[2], 1,
+                               FS_STYLE_COLUMN, FS_CALC_CURRENT,
+                               buff);
 	FS_internal_start(SGstats.handle);
 
     return 0;

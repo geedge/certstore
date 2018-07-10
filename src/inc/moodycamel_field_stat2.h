@@ -24,7 +24,6 @@ enum field_op
 {
 	FS_OP_ADD=1,
 	FS_OP_SET,
-    FS_OP_GET,
 };
 
 typedef	void* screen_stat_handle_t;
@@ -55,5 +54,8 @@ int FS_internal_register(screen_stat_handle_t handle,enum field_dsp_style_t styl
 						 enum field_calc_algo calc_type,const char* name);
 
 int FS_internal_operate(screen_stat_handle_t handle,int id,int column_id,enum field_op op,long long value);
+
+int FS_internal_register_ratio(screen_stat_handle_t handle,int numerator_id,int denominator_id,int scaling,
+				      		   enum field_dsp_style_t style,enum field_calc_algo calc_type,const char* name);
 
 #endif
