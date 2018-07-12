@@ -706,12 +706,14 @@ rd_encode_sendbuf(struct request_t *request, redisAsyncContext *c, char *sendbuf
     int xret = -1;
     uint64_t startTime = 0, endTime = 0;
 
-    libevent_thread *thread = threads + request->thread_id;
+    libevent_thread *thread     = threads + request->thread_id;
 
     struct config_bucket_t *rte = cert_default_config();
+
     char cert[SG_DATA_SIZE] = {0}, pubkey[SG_DATA_SIZE] = {0};
 
-    startTime = rt_time_ms();
+    startTime = rt_time_ns();
+
     x509_online_append(request->host, thread->key, thread->root, cert, pubkey);
     if (cert[0] == '\0' && pubkey[0] == '\0'){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to issue certificate");
@@ -719,9 +721,10 @@ rd_encode_sendbuf(struct request_t *request, redisAsyncContext *c, char *sendbuf
         goto finish;
     }
 
-    endTime = rt_time_ms();
+    endTime          = rt_time_ns();
     thread->diffTime += (endTime - startTime);
-    //printf("%lu - %lu = %lu(%lu)\n", startTime, endTime, endTime - startTime, thread->diffTime);
+
+    mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "%lu - %lu = %lu\n", startTime, endTime, endTime - startTime);
     fs_internal_operate(thread->column_ids, thread->field_ids, SGstats.line_ids[2], SGstats.line_ids[3], thread->diffTime);
 
     snprintf(sendbuf, SG_DATA_SIZE * 2, "%s%s", pubkey, cert);
@@ -765,9 +768,11 @@ void rd_get_callback(redisAsyncContext *c, void *r, void *privdata)
     int xret = -1;
     char sendbuf[SG_DATA_SIZE * 2] = {0};
 
-	redisReply *reply = (redisReply*)r;
+	redisReply *reply              = (redisReply*)r;
 
-    struct request_t *request = (struct request_t *)privdata;
+    struct request_t *request      = (struct request_t *)privdata;
+
+    struct evhttp_request *evh_req = request->evh_req;
 
     switch(reply->type){
         case REDIS_REPLY_STRING:
@@ -787,7 +792,7 @@ void rd_get_callback(redisAsyncContext *c, void *r, void *privdata)
     if (xret < 0)
         goto finish;
 
-    evhttp_socket_send(request->evh_req, sendbuf);
+    evhttp_socket_send(evh_req, sendbuf);
 finish:
     return;
 }
@@ -909,11 +914,11 @@ finish:
 void
 pthread_work_proc(struct evhttp_request *evh_req, void *arg)
 {
-    int xret = -1;
-    const char *cmdtype;
-    struct request_t *request = NULL;
-	struct evhttp_uri *decoded = NULL;
-    libevent_thread *thread_info = (libevent_thread *)arg;
+    int xret                     = -1;
+    const char *cmdtype          = NULL;
+    struct request_t *request    = NULL;
+	struct evhttp_uri *decoded   = NULL;
+    libevent_thread *t = (libevent_thread *)arg;
 
    /* we want to know if this connection closes on us */
 	evhttp_connection_set_closecb(evhttp_request_get_connection(evh_req), evhttp_socket_close_cb, NULL);
@@ -928,34 +933,39 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
 
 	request = (struct request_t *) kmalloc (sizeof(struct request_t), MPF_CLR, -1);
     if (request != NULL){
-        request->thread_id = thread_info->id;
-        request->evh_req = evh_req;
+        request->thread_id = t->id;
+        request->evh_req   = evh_req;
     }
 
 	switch (evhttp_request_get_command(evh_req)) {
-        case EVHTTP_REQ_GET: cmdtype = "GET"; break;
-        default: cmdtype = "unknown"; break;
+        case EVHTTP_REQ_GET: cmdtype = "GET";     break;
+        default:             cmdtype = "unknown"; break;
 	}
-    fs_internal_operate(thread_info->column_ids, -1, SGstats.line_ids[0], -1, 0);
+
+    fs_internal_operate(t->column_ids, -1, SGstats.line_ids[0], -1, 0);
 
     rt_decode_uri(uri, request->host, &request->flag, &request->valid);
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "[Thread %d]Received a %s request for %s, host:%s, flag:%d, valid:%d\nHeaders:",
-	                request->thread_id, cmdtype, uri, request->host,
-                    request->flag, request->valid);
+	                 request->thread_id,  cmdtype, uri, request->host,
+                     request->flag, request->valid);
 
     if (request->host[0] != '\0' && request->evh_req != NULL){
 #ifdef RD_MUTEX_LOCK
-        rd_mutex_lock(request->host, 30, &request->mtx, thread_info->sync);
+        char key[DATALEN] = {0};
+        snprintf(key, DATALEN, "%s_%s",request->host, "key");
+        rd_mutex_lock(key, 30, &request->mtx, t->sync);
 #endif
-        xret = redisAsyncCommand(thread_info->cl_ctx, rd_get_callback, request, "GET %s", request->host);
+        xret = redisAsyncCommand(t->cl_ctx, rd_get_callback, request, "GET %s", request->host);
         if (xret < 0)
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get information from redis server");
     }
     else {
+
         kfree(request);
         evhttp_uri_free(decoded);
         goto error;
     }
+
     evhttp_uri_free(decoded);
     goto finish;
 
@@ -990,20 +1000,21 @@ finish:
 
 static void *pthread_worker_libevent(void *arg)
 {
-    int xret = -1;
-	struct evhttp *http = NULL;
-	struct event_base *base = NULL;
+    int xret                          = -1;
+	struct evhttp *http               = NULL;
+	struct event_base *base           = NULL;
 	struct evhttp_bound_socket *bound = NULL;
 
     libevent_thread *thread_info = (libevent_thread *)arg;
 
-    struct config_bucket_t *rte = cert_default_config();
+    struct config_bucket_t *rte  = cert_default_config();
 
     base = event_base_new();
     if (! base) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Can't allocate event base\n");
         goto finish;
     }
+
     http = evhttp_new(base);
 	if (!http) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "couldn't create evhttp. Exiting.\n");
@@ -1021,8 +1032,8 @@ static void *pthread_worker_libevent(void *arg)
     if (bound != NULL) {
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Bound(%p) to port %d - Awaiting connections ... ", bound, rte->e_port);
 	}
-	event_base_dispatch(base);
 
+	event_base_dispatch(base);
 error:
     event_base_free(base);
 finish:
@@ -1093,18 +1104,18 @@ libevent_socket_init()
     struct sockaddr_in sin;
     evutil_socket_t accept_fd = -1;
     int xret = -1;
-    unsigned int tid = 0;
+    unsigned int tid        = 0;
     libevent_thread *thread = NULL;
 
     struct config_bucket_t *rte = cert_default_config();
-    unsigned int thread_nu = rte->thread_nu;
+    unsigned int thread_nu      = rte->thread_nu;
 
     /* Create a new evhttp object to handle requests. */
     memset(&sin, 0, sizeof(struct sockaddr_in));
     sin.sin_family = AF_INET;
-    sin.sin_port = htons(rte->e_port);
-    accept_fd = evhttp_listen_socket_byuser((struct sockaddr*)&sin, sizeof(struct sockaddr_in),
-                                             LEV_OPT_REUSEABLE_PORT|LEV_OPT_CLOSE_ON_FREE, -1);
+    sin.sin_port   = htons(rte->e_port);
+    accept_fd      = evhttp_listen_socket_byuser((struct sockaddr*)&sin, sizeof(struct sockaddr_in),
+                                                 LEV_OPT_REUSEABLE_PORT|LEV_OPT_CLOSE_ON_FREE, -1);
     if (accept_fd < 0) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Could not create a listen!\n");
         goto finish;
@@ -1122,11 +1133,11 @@ libevent_socket_init()
 
     /* Create threads after we've done all the libevent setup. */
     for (tid = 0; tid < thread_nu; tid++) {
-        thread = threads + tid;
+        thread            = threads + tid;
 
-        thread->id = tid;
+        thread->id        = tid;
         thread->accept_fd = accept_fd;
-        thread->routine = pthread_worker_libevent;
+        thread->routine   = pthread_worker_libevent;
 
         fs_screen_preview(thread);
 
@@ -1165,8 +1176,30 @@ rt_get_pname_by_pid(pid_t pid, char *task_name)
     }
 }
 
-static int
-fs_screen_init()
+void sigproc(int __attribute__((__unused__))sig)
+{
+    unsigned int tid = 0;
+    libevent_thread *thread = NULL;
+
+    struct config_bucket_t *rte = cert_default_config();
+
+    rd_lock_fini();
+
+    for (tid = 0; tid <  rte->thread_nu; tid++) {
+        thread = threads + tid;
+
+        X509_free(thread->root);
+        EVP_PKEY_free(thread->key);
+        if (thread->cl_ctx)
+            redisAsyncDisconnect(thread->cl_ctx);
+        redisFree(thread->sync);
+    }
+    kfree(threads);
+
+    exit(1);
+}
+
+static int cert_screen_init()
 {
 	int value=0;
 	char stat_path[63] = {0};
@@ -1200,6 +1233,8 @@ fs_screen_init()
     snprintf(buff,sizeof(buff),"%s", "take-time");
     SGstats.line_ids[3] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
 
+    value=SGstats.line_ids[3];
+	FS_internal_set_para(SGstats.handle, ID_INVISBLE, &value, sizeof(value));
     snprintf(buff,sizeof(buff),"average-time");
     FS_internal_register_ratio(SGstats.handle, SGstats.line_ids[3],
                                SGstats.line_ids[2], 1,
@@ -1214,7 +1249,7 @@ int cert_session_init()
 {
     int xret = 0;
 
-    fs_screen_init();
+    cert_screen_init();
 
     libevent_socket_init();
 

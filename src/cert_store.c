@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 
 #include "rt_string.h"
 #include "rt_common.h"
@@ -103,6 +104,7 @@ int main(int argc, char **argv)
     if (MODE_TYPE(0x20)){
         daemonize();
     }
+    signal(SIGINT, sigproc);
 
     cert_preview();
     cert_session_init();

@@ -39,7 +39,9 @@ typedef struct {
 
 } libevent_thread;
 
-extern int cert_session_init();
+int cert_session_init();
+
+void sigproc(int __attribute__((__unused__))sig);
 
 #endif
 

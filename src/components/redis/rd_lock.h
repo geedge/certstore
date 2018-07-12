@@ -18,6 +18,8 @@ struct rd_lock_scb{
 
 void rd_lock_init();
 
+void rd_lock_fini();
+
 int rd_mutex_lock(const char *resource, const int ttl,
                  struct rd_lock_scb *mtx, struct redisContext *c);
 

@@ -13,6 +13,7 @@ using namespace std;
 extern "C" screen_stat_handle_t FS_internal_create_handle(void);
 extern "C" int FS_internal_set_para(screen_stat_handle_t handle, enum FS_option  type,const void* value,int size);
 extern "C" void FS_internal_start(screen_stat_handle_t handle);
+extern "C" void FS_internal_stop(screen_stat_handle_t* handle);
 extern "C" int FS_internal_register(screen_stat_handle_t handle,enum field_dsp_style_t style,
 						 			enum field_calc_algo calc_type,const char* name);
 extern "C" int FS_internal_operate(screen_stat_handle_t handle,int id,int column_id,enum field_op op,long long value);
@@ -33,6 +34,11 @@ int FS_internal_set_para(screen_stat_handle_t handle, enum FS_option  type,const
 void FS_internal_start(screen_stat_handle_t handle)
 {
 	FS_start(handle);
+}
+
+void FS_internal_stop(screen_stat_handle_t* handle)
+{
+	FS_stop(handle);
 }
 
 int FS_internal_register(screen_stat_handle_t handle,enum field_dsp_style_t style,

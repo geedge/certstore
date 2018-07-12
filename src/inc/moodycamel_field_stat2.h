@@ -50,6 +50,8 @@ int FS_internal_set_para(screen_stat_handle_t handle, enum FS_option  type,const
 
 void FS_internal_start(screen_stat_handle_t handle);
 
+void FS_internal_stop(screen_stat_handle_t* handle);
+
 int FS_internal_register(screen_stat_handle_t handle,enum field_dsp_style_t style,
 						 enum field_calc_algo calc_type,const char* name);
 

@@ -61,13 +61,13 @@ get_unique_lockid()
 }
 
 static int
-rd_lock_instance(redisContext *c, const char *resource,
+rd_lock_instance(redisContext *c, const char *key,
                  const char *val, const int ttl)
 {
     int xret = 0;
     redisReply *reply;
 
-    reply = (redisReply *)redisCommand(c, "set %s %s px %d nx", resource, val, ttl);
+    reply = (redisReply *)redisCommand(c, "set %s %s px %d nx", key, val, ttl);
     if (NULL == reply)
         goto finish;
 
@@ -129,15 +129,14 @@ int rd_mutex_unlock(struct rd_lock_scb *mtx, struct redisContext *c)
         freeReplyObject(reply);
     }
 
-    if (reply->integer){
-        sdsfree(mtx->m_resource);
-        sdsfree(mtx->m_val);
-    }
+    sdsfree(mtx->m_resource);
+    sdsfree(mtx->m_val);
+
     return 0;
 }
 
 /* redis lock*/
-int rd_mutex_lock(const char *resource, const int ttl,
+int rd_mutex_lock(const char *key, const int ttl,
                  struct rd_lock_scb *mtx, struct redisContext *c)
 {
     struct rd_RedLock *redlock = mutx_redlock();
@@ -149,7 +148,7 @@ int rd_mutex_lock(const char *resource, const int ttl,
     if (!val) {
         return xret;
     }
-    mtx->m_resource = sdsnew(resource);
+    mtx->m_resource = sdsnew(key);
     mtx->m_val = val;
     retryCount  = redlock->m_retryCount;
 
@@ -161,7 +160,7 @@ int rd_mutex_lock(const char *resource, const int ttl,
             goto finish;
         }
 
-        if (rd_lock_instance(c, resource, val, ttl)) {
+        if (rd_lock_instance(c, key, val, ttl)) {
             n++;
         }
 
@@ -199,5 +198,12 @@ void rd_lock_init()
     rdlock->m_clockDriftFactor = 0.01;
 
     return;
+}
+
+void rd_lock_fini()
+{
+    struct rd_RedLock *rdlock = mutx_redlock();
+
+    sdsfree(rdlock->m_unlockScript);
 }
 
