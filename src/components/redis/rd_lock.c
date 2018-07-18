@@ -41,7 +41,7 @@ get_unique_lockid()
 {
     int i = 0;
     char *s = NULL;
-	char value[10] = "0123456789";
+	char value[10] = "abcdefghij";
     unsigned char buffer[20];
 
     struct timeval t1;
@@ -70,8 +70,6 @@ rd_lock_instance(redisContext *c, const char *key,
     reply = (redisReply *)redisCommand(c, "set %s %s px %d nx", key, val, ttl);
     if (NULL == reply)
         goto finish;
-
-    //printf("Set return: %s [null == fail, OK == success]\n", reply->str);
 
     if (reply->str && STRCMP(reply->str, "OK") == 0) {
         xret = 1;
@@ -135,9 +133,59 @@ int rd_mutex_unlock(struct rd_lock_scb *mtx, struct redisContext *c)
     return 0;
 }
 
-/* redis lock*/
+/*
+    ttl ms
+*/
+
 int rd_mutex_lock(const char *key, const int ttl,
-                 struct rd_lock_scb *mtx, struct redisContext *c)
+                  struct rd_lock_scb *mtx, struct redisContext *c)
+{
+    char *val                  = NULL;
+    int  xret                  = 0;
+    struct rd_RedLock *redlock = mutx_redlock();
+
+
+    val = get_unique_lockid();
+    if (!val) {
+        return xret;
+    }
+    mtx->m_resource = sdsnew(key);
+    mtx->m_val      = val;
+
+    int end = (int)time(NULL) * 1000 + ttl;
+
+    while((int)time(NULL) * 1000 < end){
+        int n = 0;
+
+        int startTime    = (int)time(NULL) * 1000;
+
+        if (c == NULL || c->err) {
+            goto finish;
+        }
+
+        if (rd_lock_instance(c, key, val, ttl)) {
+            n++;
+        }
+
+        int validityTime  = ttl - ((int)time(NULL) * 1000 - startTime);
+        if (n > 0 && validityTime > 0) {
+            mtx->m_validityTime = validityTime;
+            xret = 1;
+            goto finish;
+        }
+
+        int delay  = redlock->m_retryDelay;
+        usleep(delay * 1000);
+    }
+
+finish:
+    return xret;
+}
+
+
+/* redis lock*/
+int rd_mutex_lock_bak(const char *key, const int ttl,
+                      struct rd_lock_scb *mtx, struct redisContext *c)
 {
     struct rd_RedLock *redlock = mutx_redlock();
 
@@ -166,8 +214,8 @@ int rd_mutex_lock(const char *key, const int ttl,
 
         int drift = (ttl * redlock->m_clockDriftFactor) + 2;
         int validityTime = ttl - ((int)time(NULL) * 1000 - startTime) - drift;
-        //printf("The resource validty time is %d, n is %d\n",
-        //       validityTime, n);
+        printf("The resource validty time is %d, n is %d\n",
+               validityTime, n);
 
         if (n > 0 && validityTime > 0) {
             mtx->m_validityTime = validityTime;
@@ -179,7 +227,7 @@ int rd_mutex_lock(const char *key, const int ttl,
         }
         // Wait a random delay before to retry
         int delay = rand() % redlock->m_retryDelay + floor(redlock->m_retryDelay / 2);
-        printf("[Test] delay = %d\n", delay);
+        //printf("[Test] delay = %d\n", delay);
         usleep(delay * 1000);
         retryCount--;
     } while (retryCount > 0);

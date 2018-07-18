@@ -21,11 +21,13 @@ struct request_t{
 #define DATALEN 64
     char host[DATALEN];
 
-    int thread_id;
+    int t_id;
 
     int flag;
 
     int valid;
+
+    char *sendbuf;
 
     struct rd_lock_scb mtx;
 

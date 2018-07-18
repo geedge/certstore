@@ -79,7 +79,7 @@ void cert_syslog_init(char *config)
 
     logging_sc_lid.run_log_handle = MESA_create_runtime_log_handle(run_log_path, logging_sc_lid.run_log_level);
     if(logging_sc_lid.run_log_handle == NULL){
-        printf("Create log runtime_log_handle error, init failed!");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Create log runtime_log_handle error, init failed!");
         goto finish;
     }else{
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Log module initialization");
