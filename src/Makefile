@@ -36,10 +36,6 @@ dir := ./components/syslogd
 include $(dir)/syslog.mk
 OBJS += $(OBJS_$(dir))
 
-dir := ./components/redis
-include $(dir)/redis.mk
-OBJS += $(OBJS_$(dir))
-
 dir := ./rt
 include $(dir)/rt.mk
 OBJS += $(OBJS_$(dir))

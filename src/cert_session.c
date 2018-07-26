@@ -100,7 +100,7 @@ ssl_x509_serial_copyrand(X509 *dstcrt, X509 *srccrt)
 {
 	ASN1_INTEGER *srcptr, *dstptr;
 	BIGNUM *bnserial;
-	unsigned int rand;
+	long rand;
 	int rv;
 
 #ifndef PURIFY
@@ -160,7 +160,7 @@ ssl_x509_v3ext_copy_by_nid(X509 *crt, X509 *origcrt, int nid)
 }
 
 X509 *
-x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, EVP_PKEY *key,
+x509_modify_by_cert_bak(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, EVP_PKEY *key,
                             int days, const char *extraname, const char *crlurl)
 {
 	X509_NAME *subject, *issuer;
@@ -409,7 +409,7 @@ finish:
 	return;
 }
 
-void x509_get_pubkey_form_ca(X509 *crt, char *pubkey)
+void x509_get_private_key(EVP_PKEY *pkey, char *pubkey)
 {
 	BIO *bp = NULL;
     int len = 0;
@@ -419,30 +419,18 @@ void x509_get_pubkey_form_ca(X509 *crt, char *pubkey)
         goto finish;
     }
 
-    EVP_PKEY * pkey = X509_get_pubkey(crt);
-    if (pkey == NULL) {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Error getting public key");
-        goto free_err;
-    }
-    PEM_write_bio_PUBKEY(bp, pkey);
+    PEM_write_bio_PrivateKey(bp, pkey, NULL, NULL, 0, NULL, NULL);
     len = BIO_read(bp, pubkey, SG_DATA_SIZE);
     if(len <= 0) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Error reading signature file");
-        goto free_key;
+        goto free_err;
     }
     pubkey[len] = '\0';
-free_key:
-    EVP_PKEY_free(pkey);
+
 free_err:
     BIO_free(bp);
 finish:
 	return;
-}
-
-static void callback(int __attribute__((__unused__))p, int __attribute__((__unused__))n,
-                     void __attribute__((__unused__))*arg)
-{
-    return;
 }
 
 /*
@@ -450,7 +438,7 @@ static void callback(int __attribute__((__unused__))p, int __attribute__((__unus
  * wont reference any other sections.
  */
 
-int add_ext(X509 *cert, int nid, char *value)
+int add_ext(X509 *cacrt, X509 *cert, int nid, char *value)
 {
     X509_EXTENSION *ex;
     X509V3_CTX ctx;
@@ -461,7 +449,7 @@ int add_ext(X509 *cert, int nid, char *value)
      * Issuer and subject certs: both the target since it is self signed, no
      * request and no CRL
      */
-    X509V3_set_ctx(&ctx, cert, cert, NULL, NULL, 0);
+    X509V3_set_ctx(&ctx, cacrt, cert, NULL, NULL, 0);
     ex = X509V3_EXT_conf_nid(NULL, &ctx, nid, value);
     if (!ex)
         return 0;
@@ -469,102 +457,6 @@ int add_ext(X509 *cert, int nid, char *value)
     X509_add_ext(cert, ex, -1);
     X509_EXTENSION_free(ex);
     return 1;
-}
-
-int mkcert(X509 **x509p, EVP_PKEY **pkeyp, int bits,
-           int serial, char *host, int days)
-{
-    X509 *x;
-    EVP_PKEY *pk;
-    RSA *rsa;
-    X509_NAME *name = NULL;
-
-    if ((pkeyp == NULL) || (*pkeyp == NULL)) {
-        if ((pk = EVP_PKEY_new()) == NULL) {
-            abort();
-            return (0);
-        }
-    } else
-        pk = *pkeyp;
-
-    if ((x509p == NULL) || (*x509p == NULL)) {
-        if ((x = X509_new()) == NULL)
-            goto err;
-    } else
-        x = *x509p;
-
-    rsa = RSA_generate_key(bits, RSA_F4, callback, NULL);
-    if (!EVP_PKEY_assign_RSA(pk, rsa)) {
-        abort();
-        goto err;
-    }
-    rsa = NULL;
-
-    X509_set_version(x, 2);
-    ASN1_INTEGER_set(X509_get_serialNumber(x), serial);
-    X509_gmtime_adj(X509_get_notBefore(x), 0);
-    X509_gmtime_adj(X509_get_notAfter(x), (long)60 * 60 * 24 * days);
-    X509_set_pubkey(x, pk);
-
-    name = X509_get_subject_name(x);
-
-    /*
-     * This function creates and adds the entry, working out the correct
-     * string type and performing checks on its length. Normally we'd check
-     * the return value for errors...
-     */
-    X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, (const unsigned char *)"UK", -1, -1, 0);
-    X509_NAME_add_entry_by_txt(name, "CN",
-                               MBSTRING_ASC, (const unsigned char *)host, -1, -1, 0);
-
-    /*
-     * Its self signed so set the issuer name to be the same as the subject.
-     */
-    X509_set_issuer_name(x, name);
-
-    /* Add various extensions: standard extensions */
-    add_ext(x, NID_basic_constraints, "critical,CA:TRUE");
-    add_ext(x, NID_key_usage, "critical,keyCertSign,cRLSign");
-
-    add_ext(x, NID_subject_key_identifier, "hash");
-
-    /* Some Netscape specific extensions */
-    add_ext(x, NID_netscape_cert_type, "sslCA");
-
-    add_ext(x, NID_netscape_comment, "example comment extension");
-
-#ifdef CUSTOM_EXT
-    /* Maybe even add our own extension based on existing */
-    {
-        int nid;
-        nid = OBJ_create("1.2.3.4", "MyAlias", "My Test Alias Extension");
-        X509V3_EXT_add_alias(nid, NID_netscape_comment);
-        add_ext(x, nid, "example comment alias");
-    }
-#endif
-
-    if (!X509_sign(x, pk, EVP_sha1()))
-        goto err;
-
-    *x509p = x;
-    *pkeyp = pk;
-    return (1);
- err:
-    return (0);
-}
-
-X509 *x509_create_cert(char *host, int days)
-{
-    X509 *x509 = NULL;
-    EVP_PKEY *pkey = NULL;
-
-    CRYPTO_mem_ctrl(CRYPTO_MEM_CHECK_ON);
-
-    mkcert(&x509, &pkey, 1024, 0, host, days);
-
-    EVP_PKEY_free(pkey);
-
-    return x509;
 }
 
 #if 0
@@ -589,6 +481,7 @@ finish:
 }
 #endif
 
+static
 int redis_rsync_init(struct event_base *base, struct redisAsyncContext **cl_ctx)
 {
     int xret = -1;
@@ -652,7 +545,7 @@ redis_reget_callback(redisAsyncContext __attribute__((__unused__))*cl_ctx,
     return;
 }
 
-static void
+static void __attribute__((__unused__))
 redis_set_callback(redisAsyncContext *cl_ctx, void *r,
                    void *privdata)
 {
@@ -700,28 +593,155 @@ finish:
     return;
 }
 
-int x509_online_append(char *host, EVP_PKEY *key, X509 *root, char *ca_s, char *pubkey)
+static
+int create_client_key(EVP_PKEY** pkey, char *pubkey, int bits)
 {
-    int xret = -1;
-    struct config_bucket_t *rte = cert_default_config();
+    RSA *rsa = NULL;
+    EVP_PKEY *pk = NULL;
 
-    X509* ca = x509_create_cert(host, rte->days);
-    if (!ca){
-        goto finish;
-    }
-    X509* x509 = x509_modify_by_cert(root, key, ca, X509_get_pubkey(root),
-                                     rte->days, NULL, NULL);
-    if (!x509){
+    if((pk = EVP_PKEY_new()) == NULL){
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "create_client_key, gen new key failed!");
         goto err;
     }
-    x509_get_pubkey_form_ca(x509, pubkey);
+
+    rsa = RSA_generate_key(bits, RSA_F4, NULL, NULL);
+    if(!EVP_PKEY_assign_RSA(pk, rsa)){
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "create_client_key, assign key failed!");
+        EVP_PKEY_free(pk);
+        goto err;
+    }
+    x509_get_private_key(pk, pubkey);
+    rsa = NULL;
+
+    *pkey = pk;
+    return 1;
+
+err:
+    return 0;
+}
+
+int add_cert_ctx(X509_NAME* name, char* ctx[], int num)
+{
+    int i = 0;
+    int max = 0;
+
+    int item[] = {NID_commonName, NID_countryName,
+        NID_stateOrProvinceName, NID_localityName,
+        NID_organizationName, NID_organizationalUnitName,
+        NID_pkcs9_emailAddress};
+
+    max = sizeof(item)/sizeof(item[0]);
+    max = max > num ? num : max;
+
+    for(i = 0; i< max; ++i){
+        if(!X509_NAME_add_entry_by_NID(name, item[i], MBSTRING_UTF8, (unsigned char *)ctx[i], -1, -1, 0)){
+            mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "add_cert_ctx, add entry:%d to %s failed!", item[i], ctx[i]);
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+int rand_serial(BIGNUM *b, ASN1_INTEGER *ai)
+{
+#define SERIAL_RAND_BITS  124
+    BIGNUM *btmp;
+    int ret = 0;
+    if (b)
+        btmp = b;
+    else
+        btmp = BN_new();
+    if (!btmp)
+        return 0;
+    if (!BN_pseudo_rand(btmp, SERIAL_RAND_BITS, 0, 0))
+        goto error;
+    if (ai && !BN_to_ASN1_INTEGER(btmp, ai))
+        goto error;
+    ret = 1;
+
+ error:
+    if (!b)
+        BN_free(btmp);
+    return ret;
+}
+
+X509 *x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, const char* host,
+                          char *pubkey, const int days)
+{
+    X509* x = NULL;
+    EVP_PKEY* pk = NULL;
+
+    char* ctx[] = {(char*)host, "CN", "mystate",
+                             "mycity", "myorganization", "mygroup",
+                             "sample@sample.com"};
+
+    if(!create_client_key(&pk, pubkey, 1024)){
+        goto err;
+    }
+
+    if((x = X509_new()) == NULL){
+        goto err;
+    }
+
+    if (!X509_set_version(x, 0x02)){
+        goto err;
+    }
+
+    if (!X509_set_version(x, 0x02) ||
+        !X509_set_issuer_name(x, X509_get_subject_name(cacrt)) ||
+        !rand_serial(NULL, X509_get_serialNumber(x)) ||
+        !X509_gmtime_adj(X509_get_notBefore(x), 0L) ||
+        !X509_time_adj_ex(X509_get_notAfter(x), days, 0, NULL) ||
+        !X509_set_pubkey(x, pk) ||
+        !add_cert_ctx(X509_get_subject_name(x), ctx, 7))
+        goto err;
+#if 1
+
+    /* Add various extensions: standard extensions */
+    add_ext(cacrt, x, NID_basic_constraints, "critical,CA:FALSE");
+    add_ext(cacrt, x, NID_subject_key_identifier, "hash");
+    add_ext(cacrt, x, NID_key_usage, "Digital Signature, Key Encipherment, Data Encipherment");
+
+    /**/
+
+    add_ext(cacrt, x, NID_authority_key_identifier, "keyid:always");
+
+    add_ext(cacrt, x, NID_ext_key_usage, "serverAuth,clientAuth");
+    /*NID_certificate_policies*/
+/*
+    char dns[128] = {0}, domain[16] = {0};
+    sscanf(host, "%*[^.].%[^.]", domain);
+    snprintf(dns, 127, "DNS:%s.com, DNS:*.%s.com, DNS:www.%s.cn", domain, domain, domain);
+    add_ext(cacrt, x, NID_subject_alt_name, dns);
+*/
+#endif
+    if(!X509_sign(x, cakey, EVP_sha256())){
+        goto err;
+    }
+    return x;
+
+err:
+    if(x)
+        X509_free(x);
+    if(pk)
+        EVP_PKEY_free(pk);
+    return NULL;
+}
+
+int x509_online_append(char *host, EVP_PKEY *key, X509 *root, char *ca_s, char *pubkey)
+{
+    struct config_bucket_t *rte = cert_default_config();
+
+    X509* x509 = x509_modify_by_cert(root, key, host, pubkey, rte->days);
+    if (!x509){
+        goto finish;
+    }
     x509_get_msg_from_ca(x509, ca_s);
 
     X509_free(x509);
-err:
-    X509_free(ca);
 finish:
-    return xret;
+    return 0;
 }
 
 static char readBytes(char *str)
@@ -855,7 +875,7 @@ finish:
 
 void redis_get_callback(redisAsyncContext *c, void *r, void *privdata)
 {
-    int  __attribute__((__unused__))xret = -1;
+    int __attribute__((__unused__))xret = -1;
 
 	redisReply *reply              = (redisReply*)r;
     struct request_t *request      = (struct request_t *)privdata;
@@ -881,7 +901,7 @@ void redis_get_callback(redisAsyncContext *c, void *r, void *privdata)
 
 int x509_privatekey_init(EVP_PKEY **key, X509 **root)
 {
-    int xret = -1, len = 0;
+    int xret = -1;
 	FILE *fp; RSA *rsa = NULL;
     char key_path[128] = {0}, cert_path[128] = {0};
     struct config_bucket_t *rte = cert_default_config();
@@ -899,7 +919,6 @@ int x509_privatekey_init(EVP_PKEY **key, X509 **root)
         goto pkey_free;
     }
 
-	unsigned char buf[SG_DATA_SIZE],*p;
     fp = fopen(key_path, "r");
     if (NULL == fp){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", key_path);
@@ -913,21 +932,20 @@ int x509_privatekey_init(EVP_PKEY **key, X509 **root)
 	}
     fclose(fp);
 
-	fp = fopen(cert_path, "rb");
-	if (NULL == fp){
+    BIO *in;
+    in = BIO_new_file(cert_path, "r");
+    if (!in){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", cert_path);
         goto pkey_free;
     }
-    len = fread(buf, 1, SG_DATA_SIZE, fp);
-    fclose(fp);
 
-    p = buf;
-    *root = X509_new();
-    if ( d2i_X509(root, (const unsigned char**)&p, len) == NULL )
+    if ((*root = PEM_read_bio_X509(in, NULL, 0, NULL)) == NULL )
     {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Application for x509 failed");
 		goto pkey_free;
 	}
+    BIO_free(in);
+
     xret = 0;
     goto finish;
 
@@ -938,10 +956,10 @@ finish:
 }
 
 static int
-rt_decode_uri(const char *uri, char *host,
+ev_decode_uri(const char *uri, char *host,
            int *flag, int *valid)
 {
-    const char *fg    = NULL, *vl = NULL, *ht = NULL;
+    const char *fg    = NULL, *vl = NULL, *hst = NULL;
     char *decoded_uri = NULL;
     struct evkeyvalq params;
 
@@ -952,9 +970,9 @@ rt_decode_uri(const char *uri, char *host,
 
     evhttp_parse_query(decoded_uri, &params);
 
-    ht = evhttp_find_header(&params, "host");
-    if (ht[0] != '\0')
-        memcpy(host, ht, strlen(ht));
+    hst = evhttp_find_header(&params, "host");
+    if (hst[0] != '\0')
+        memcpy(host, hst, strlen(hst));
 
     fg = evhttp_find_header(&params, "flag");
     if (fg)
@@ -1016,7 +1034,7 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
 
     FS_internal_operate(SGstats.handle, t->column_ids, SGstats.line_ids[0], FS_OP_ADD, 1);
 
-    rt_decode_uri(uri, request->host, &request->flag, &request->valid);
+    ev_decode_uri(uri, request->host, &request->flag, &request->valid);
     mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "[Thread %d]Received a %s request for %s, host:%s, flag:%d, valid:%d\nHeaders:",
 	                 request->t_id,  cmdtype, uri, request->host,
                      request->flag, request->valid);
