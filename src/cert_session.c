@@ -1059,19 +1059,31 @@ finish:
     return;
 }
 
-int redis_sync_int(struct redisContext **c)
+int redis_sync_init(struct redisContext **c)
 {
+    int xret = -1;
     struct config_bucket_t *redis = cert_default_config();
 
     struct timeval timeout = { 1, 500000 }; // 1.5 seconds
 
     *c = redisConnectWithTimeout(redis->r_ip, redis->r_port, timeout);
-
-    return 0;
+    if (*c == NULL || (*c)->err) {
+        if (*c) {
+            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Sync connection error: %s\n", (*c)->errstr);
+            redisFree(*c);
+            *c = NULL;
+        } else {
+            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Connection error: can't allocate redis context\n");
+        }
+        goto finish;
+    }
+    xret = 0;
+finish:
+    return xret;
 }
 
 static int
-task_int(struct event_base *base, libevent_thread *me)
+cert_task_private_init(struct event_base *base, libevent_thread *me)
 {
     int xret = -1;
 
@@ -1082,7 +1094,11 @@ task_int(struct event_base *base, libevent_thread *me)
         goto finish;
     }
 
-    xret = redis_sync_int(&me->sync);
+    xret = redis_sync_init(&me->sync);
+    if (xret < 0 || !me->sync){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Initialize the sync redis connection is failure\n");
+        goto finish;
+    }
 
     /* Initialize the X509 CA*/
     xret = x509_privatekey_init(&me->key, &me->root);
@@ -1101,28 +1117,28 @@ static void *pthread_worker_libevent(void *arg)
 	struct event_base *base           = NULL;
 	struct evhttp_bound_socket *bound = NULL;
 
-    libevent_thread *t                = (libevent_thread *)arg;
+    libevent_thread *thread           = (libevent_thread *)arg;
 
     base = event_base_new();
     if (! base) {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Can't allocate event base\n");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Can'thread allocate event base\n");
         goto finish;
     }
 
     http = evhttp_new(base);
 	if (!http) {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "couldn't create evhttp. Exiting.\n");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "couldn'thread create evhttp. Exiting.\n");
 		goto error;
 	}
 
     /* Context initialization */
-    xret = task_int(base, t);
+    xret = cert_task_private_init(base, thread);
     if (xret < 0){
         goto error;
     }
-    evhttp_set_cb(http, "/ca", pthread_work_proc, t);
+    evhttp_set_cb(http, "/ca", pthread_work_proc, thread);
 
-    bound = evhttp_accept_socket_with_handle(http, t->accept_fd);
+    bound = evhttp_accept_socket_with_handle(http, thread->accept_fd);
     if (bound != NULL) {
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Bound(%p) to port %d - Awaiting connections ... ", bound,
                         cert_default_config()->e_port);
@@ -1276,13 +1292,12 @@ void sigproc(int __attribute__((__unused__))sig)
 
     for (tid = 0; tid <  rte->thread_nu; tid++) {
         thread = threads + tid;
-
+        if (thread->sync){
+            redisAsyncDisconnect(thread->cl_ctx);
+            redisFree(thread->sync);
+        }
         X509_free(thread->root);
         EVP_PKEY_free(thread->key);
-        if (thread->cl_ctx)
-            redisAsyncDisconnect(thread->cl_ctx);
-        if (thread->sync)
-            redisFree(thread->sync);
     }
     kfree(threads);
 

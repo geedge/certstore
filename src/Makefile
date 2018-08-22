@@ -71,8 +71,8 @@ tarball: cert_store
 	if [ ! -d "package/bin" ]; then mkdir -p "package/bin"; fi
 	if [ ! -d "package/lib" ]; then mkdir -p "package/lib"; fi
 	if [ ! -d "package/etc" ]; then mkdir -p "package/etc"; fi
-	cp cert_store package/bin/cert_store
-	#cp ../lib/*.a 	 package/lib/
+	cp cert_store package/bin/certstore
+	cp lib/*.a 	 package/lib/
 	cp ../conf/cert_store.ini package/etc/
 	cd package && tar cpfz cert_store-$(BUILD_FINGERPRINT2).tar.gz bin etc lib Makefile 
 	cd ..
