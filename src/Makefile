@@ -28,12 +28,16 @@ LIB_PATH := $(CERT_ROOT)/libs
 dir := .
 OBJS := \
 		$(OBJ_DIR)/cert_store.o \
-		$(OBJ_DIR)/cert_init.o \
+		$(OBJ_DIR)/cert_conf.o \
 		$(OBJ_DIR)/cert_daemon.o\
 		$(OBJ_DIR)/cert_session.o\
 
 dir := ./components/syslogd
 include $(dir)/syslog.mk
+OBJS += $(OBJS_$(dir))
+
+dir := ./components/json
+include $(dir)/json.mk
 OBJS += $(OBJS_$(dir))
 
 dir := ./rt
@@ -44,10 +48,10 @@ dir := ./inc
 include $(dir)/inc.mk
 OBJS += $(OBJS_$(dir)) 
 
-LDFLAGS_GLOBAL += -L ./lib -lapps -lcrypto -lssl -levent -lhiredis -lMESA_htable
+LDFLAGS_GLOBAL += -L ./lib -lapps -lcrypto -lssl -levent -lhiredis 
 LDFLAGS_GLOBAL += -L ./lib -lMESA_htable -lMESA_field_stat2 -lMESA_handle_logger -lMESA_prof_load
 LDFLAGS_GLOBAL += \
-                  -lpthread -lcrypt -lm -lz -ldl -lstdc++
+                  -lpthread -lcrypt -lmaatframe -lm -lz -ldl -lstdc++ 
 
 CFLAGS_LOCAL = -std=gnu99 -g -O3 -W -Wall \
                -I.\
@@ -55,6 +59,7 @@ CFLAGS_LOCAL = -std=gnu99 -g -O3 -W -Wall \
                -I./components/libevent\
                -I./components/redis\
                -I./components/openssl\
+			   -I./components/json\
                -I./rt \
                -I./inc \
 

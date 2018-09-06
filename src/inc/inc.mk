@@ -9,6 +9,7 @@ d               :=  $(dir)
 
 OBJS_$(d) :=\
 			$(OBJ_DIR_CPP)/moodycamel_field_stat2.o\
+			$(OBJ_DIR_CPP)/moodycamel_maat_rule.o
 		
 
 CFLAGS_LOCAL += -I$(d)

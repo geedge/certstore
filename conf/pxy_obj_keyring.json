@@ -1,0 +1,85 @@
+{
+    "compile_table": "COMPILE",
+    "group_table": "GROUP",
+    "rules": [
+        {
+            "compile_id": 123,
+            "service": 1,
+            "action": 1,
+            "do_blacklist": 1,
+            "do_log": 1,
+            "effective_range": 0,
+            "user_region": "escaped\\bdata:have\\ba\\bspace\\band\\ba\\b\\&\\bsymbol.",
+            "is_valid": "yes",
+            "groups": [
+                {
+                    "group_name": "IP_group",
+                    "regions": [
+                        {
+                            "table_name": "IP_CONFIG",
+                            "table_type": "ip",
+                            "table_content": {
+                                "addr_type": "ipv4",
+                                "src_ip": "10.0.6.201",
+                                "mask_src_ip": "255.255.0.0",
+                                "src_port": "0",
+                                "mask_src_port": "65535",
+                                "dst_ip": "0.0.0.0",
+                                "mask_dst_ip": "255.255.255.255",
+                                "dst_port": "0",
+                                "mask_dst_port": "65535",
+                                "protocol": 6,
+                                "direction": "double"
+                            }
+                        },
+                        {
+                            "table_name": "IP_CONFIG",
+                            "table_type": "ip",
+                            "table_content": {
+                                "addr_type": "ipv6",
+                                "src_ip": "2001:da8:205:1::101",
+                                "mask_src_ip": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:0000",
+                                "src_port": "0",
+                                "mask_src_port": "65535",
+                                "dst_ip": "0::0",
+                                "mask_dst_ip": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+                                "dst_port": "0",
+                                "mask_dst_port": "65535",
+                                "protocol": 6,
+                                "direction": "double"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "group_name": "Untitled",
+                    "regions": [
+                        {
+                            "table_name": "HTTP_URL",
+                            "table_type": "string",
+                            "table_content": {
+                                "keywords": "abckkk&123",
+                                "expr_type": "and",
+                                "match_method": "sub",
+                                "format": "uncase plain"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "plugin_table": [
+        {
+            "table_name": "PXY_OBJ_KEYRING",
+            "table_content": [
+                "1\t1\tname_01\troot\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1",
+                "2\t1\tname_02\troot\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1",
+                "3\t1\tname_03\troot\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1",
+                "4\t1\tname_04\tintermediate\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1",
+                "5\t1\tname_05\tintermediate\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1",
+                "6\t1\tname_06\tintermediate\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1"
+            ]
+        }
+    ]
+}

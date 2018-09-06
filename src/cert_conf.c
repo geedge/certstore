@@ -8,18 +8,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "rt_string.h"
 #include "rt_common.h"
 #include "rt_file.h"
-#include "cert_init.h"
+#include "cert_conf.h"
 #include "logging.h"
+
 #include "MESA_prof_load.h"
 
 struct config_bucket_t certConfig = {
     .thread_nu = 1,
     .days = 30,
-    .ca_path = "/usr/local/bin/",
     .e_port = 9995,
     .r_ip = "0.0.0.0",
 	.r_port = 3366,
@@ -41,19 +42,21 @@ static int load_system_config(char *config)
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the number of running threads failed");
     }
 
-    xret = MESA_load_profile_uint_nodef(config, "CONFIG", "valid-days", &(rte->days));
+    xret = MESA_load_profile_string_nodef(config, "CONFIG", "table_info", rte->info_path, 128);
     if (xret < 0){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the number of valid time failed");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the table_info path failed");
     }
-
-    xret = MESA_load_profile_string_nodef(config, "CONFIG", "ca-path", rte->ca_path, 128);
-    if (xret < 0){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the CA path failure");
+    if(!rt_file_exsit(rte->info_path)) {
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "The table_info(%s) does not exist", rte->info_path);
         goto finish;
     }
 
-    if(!rt_dir_exsit(rte->ca_path)) {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "The signature certificate(%s) does not exist", rte->ca_path);
+    xret = MESA_load_profile_string_nodef(config, "CONFIG", "pxy_obj_keyring", rte->pxy_path, 128);
+    if (xret < 0){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the pxy_obj_keyring path failed");
+    }
+    if(!rt_file_exsit(rte->pxy_path)) {
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "The pxy_obj_keyring(%s) does not exist", rte->pxy_path);
         goto finish;
     }
 finish:

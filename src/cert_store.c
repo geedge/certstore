@@ -13,7 +13,7 @@
 #include "rt_string.h"
 #include "rt_common.h"
 #include "cert_daemon.h"
-#include "cert_init.h"
+#include "cert_conf.h"
 #include "cert_session.h"
 #include "logging.h"
 #include "MESA_prof_load.h"
@@ -84,8 +84,8 @@ void cert_preview ()
     printf("%30s:%45s\n", "Redis Ip", rte->r_ip);
     printf("%30s:%45d\n", "Redis Port", rte->r_port);
     printf("%30s:%45d\n", "Libevent Port", rte->e_port);
-    printf("%30s:%45d\n", "Ca Valid time", rte->days);
-    printf("%30s:%45s\n", "Ca Directory", rte->ca_path);
+    printf("%30s:%45s\n", "Table Info", rte->info_path);
+    printf("%30s:%45s\n", "Pxy Obj Keyring", rte->pxy_path);
     printf("%30s:%45s\n", "Log Directory", logging_sc_lid.run_log_path);
 
     printf("\r\n");
@@ -104,10 +104,11 @@ int main(int argc, char **argv)
     if (MODE_TYPE(0x20)){
         daemonize();
     }
-    signal(SIGINT, sigproc);
-
     cert_preview();
+
     cert_session_init();
+
+    signal(SIGINT, sigproc);
 
     return 0;
 }

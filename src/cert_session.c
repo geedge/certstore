@@ -26,7 +26,9 @@
 #include "rt_stdlib.h"
 #include "rt_file.h"
 #include "rt_time.h"
-#include "cert_init.h"
+#include "json.h"
+
+#include "cert_conf.h"
 #include "async.h"
 #include "read.h"
 #include "bufferevent.h"
@@ -36,14 +38,18 @@
 #include "event_compat.h"
 #include "http.h"
 #include "buffer.h"
+#include "MESA_htable.h"
 #include "util-internal.h"
+#include "moodycamel_maat_rule.h"
 #include "moodycamel_field_stat2.h"
 #include "logging.h"
 
-#define	SG_DATA_SIZE    2048
+#define	WAIT_FOR_EFFECTIVE_US	1000*1000
 
-#define DEFAULT_PRIVATEKEY_NAME  "private.key"
-#define DEFAULT_CA_CERTIFICATE   "ca.cer"
+#define	SG_DATA_SIZE    4096
+
+#define DEFAULT_PRIVATEKEY_NAME  "mesalab-ca-cert.key"
+#define DEFAULT_CA_CERTIFICATE   "mesalab-ca-cert.cer"
 
 static libevent_thread *threads;
 
@@ -59,10 +65,6 @@ static struct fs_stats_t SGstats = {
 
 #define sizeof_seconds(x)  (x * 24 * 60 * 60)
 
-rt_mutex entries_mtx = PTHREAD_MUTEX_INITIALIZER;
-
-#define RD_SYNC
-
 void connectCallback(const struct redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Redis connect error : %s\n", c->errstr);
@@ -77,6 +79,110 @@ void disconnectCallback(const struct redisAsyncContext *c, int status) {
         return;
     }
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Redis server disconnected...\n");
+}
+
+static int
+MESA_internal_htable_set_opt(MESA_htable_handle table, enum MESA_htable_opt opt_type, unsigned value)
+{
+	int ret = MESA_htable_set_opt(table, opt_type, &value, (int)(sizeof(value)));
+	return ret;
+}
+
+static int
+key_ring_list_create(struct key_ring_list *keyring)
+{
+	int ret = 0;
+
+    keyring->htable = MESA_htable_born();
+	assert(keyring->htable != NULL);
+    keyring->sum_cnt = 0;
+
+	MESA_internal_htable_set_opt(keyring->htable, MHO_SCREEN_PRINT_CTRL, 0);
+	MESA_internal_htable_set_opt(keyring->htable, MHO_THREAD_SAFE, 1);
+
+    MESA_internal_htable_set_opt(keyring->htable, MHO_MUTEX_NUM, 16);
+	MESA_internal_htable_set_opt(keyring->htable, MHO_HASH_SLOT_SIZE, 1024);
+	MESA_internal_htable_set_opt(keyring->htable, MHO_HASH_MAX_ELEMENT_NUM, 2048);
+	MESA_internal_htable_set_opt(keyring->htable, MHO_EXPIRE_TIME, 0);
+
+	MESA_internal_htable_set_opt(keyring->htable, MHO_ELIMIMINATE_TYPE,
+		                         HASH_ELIMINATE_ALGO_LRU);
+	ret = MESA_htable_mature(keyring->htable);
+    if(ret != 0){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "MESA_htable_mature error!\n");
+        goto finish;
+    }
+
+finish:
+    return ret;
+}
+
+void x509_get_private_key(EVP_PKEY *pkey, char *pubkey)
+{
+	BIO *bp = NULL;
+    int len = 0;
+
+    if ( (bp=BIO_new(BIO_s_mem())) == NULL){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "unable to create BIO for output\n");
+        goto finish;
+    }
+
+    PEM_write_bio_PrivateKey(bp, pkey, NULL, NULL, 0, NULL, NULL);
+    len = BIO_read(bp, pubkey, SG_DATA_SIZE);
+    if(len <= 0) {
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Error reading signature file");
+        goto free_err;
+    }
+    pubkey[len] = '\0';
+
+free_err:
+    BIO_free(bp);
+finish:
+	return;
+}
+
+static
+int create_client_key(EVP_PKEY** pkey, char *pubkey, int bits)
+{
+    RSA *rsa = NULL;
+    EVP_PKEY *pk = NULL;
+
+    if((pk = EVP_PKEY_new()) == NULL){
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "create_client_key, gen new key failed!");
+        goto err;
+    }
+
+    rsa = RSA_generate_key(bits, RSA_F4, NULL, NULL);
+    if(!EVP_PKEY_assign_RSA(pk, rsa)){
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "create_client_key, assign key failed!");
+        EVP_PKEY_free(pk);
+        goto err;
+    }
+    x509_get_private_key(pk, pubkey);
+    rsa = NULL;
+
+    *pkey = pk;
+    return 1;
+
+err:
+    return 0;
+}
+
+static void key_ring_free(void *data)
+{
+    struct pxy_obj_keyring *pxy_obj = NULL;
+    pxy_obj = (struct pxy_obj_keyring *)data;
+
+    X509_free(pxy_obj->root);
+    EVP_PKEY_free(pxy_obj->key);
+}
+
+void key_ring_list_destroy(struct key_ring_list *keyring)
+{
+    keyring->sum_cnt = 0;
+	MESA_htable_destroy(keyring->htable, key_ring_free);
+	keyring->htable  = NULL;
+	return;
 }
 
 int
@@ -159,15 +265,37 @@ ssl_x509_v3ext_copy_by_nid(X509 *crt, X509 *origcrt, int nid)
 	return 1;
 }
 
-X509 *
-x509_modify_by_cert_bak(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, EVP_PKEY *key,
-                            int days, const char *extraname, const char *crlurl)
+int x509_get_cn_name(X509 *origcrt, char *cn_name)
 {
-	X509_NAME *subject, *issuer;
-	GENERAL_NAMES *names;
-	GENERAL_NAME *gn;
-	X509 *crt;
+    int len = 0;
+    X509_NAME *subject = NULL;
+
+	subject = X509_get_subject_name(origcrt);
+    if (!subject){
+        goto finish;
+    }
+    len = X509_NAME_get_text_by_NID(subject, NID_commonName, cn_name, 256);
+    if (len > 0){
+        printf("cn_name = %s\n", cn_name);
+    }
+finish:
+    return 0;
+}
+
+X509 *
+x509_modify_by_cert_bak(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
+                        int days, const char *extraname, const char *crlurl)
+{
 	int rv;
+	X509 *crt = NULL;
+    EVP_PKEY* key = NULL;
+	GENERAL_NAME *gn = NULL;
+	GENERAL_NAMES *names = NULL;
+	X509_NAME *subject = NULL, *issuer = NULL;
+
+    if(!create_client_key(&key, pkey, 2048)){
+        goto err;
+    }
 //subjectname,issuername
 	subject = X509_get_subject_name(origcrt);
 	issuer = X509_get_subject_name(cacrt);
@@ -384,10 +512,11 @@ errout2:
 	sk_GENERAL_NAME_pop_free(names, GENERAL_NAME_free);
 errout:
 	X509_free(crt);
+err:
 	return NULL;
 }
 
-void x509_get_msg_from_ca(X509 *x509, char *ca_s)
+void x509_get_msg_from_ca(X509 *x509, char *root)
 {
 	BIO *bp = NULL;
     int len = 0;
@@ -397,40 +526,41 @@ void x509_get_msg_from_ca(X509 *x509, char *ca_s)
         goto finish;
     }
     PEM_write_bio_X509(bp, x509);
-    len = BIO_read(bp, ca_s, SG_DATA_SIZE * 2);
+    len = BIO_read(bp, root, SG_DATA_SIZE * 2);
     if(len <= 0) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Error reading signature file");
         goto err;
     }
-    ca_s[len] ='\0';
+    root[len] ='\0';
 err:
     BIO_free(bp);
 finish:
 	return;
 }
 
-void x509_get_private_key(EVP_PKEY *pkey, char *pubkey)
+X509 *
+x509_get_ca_from_msg(const char *cert, int len)
 {
-	BIO *bp = NULL;
-    int len = 0;
+    BIO *bp;
+    X509* x509 = NULL;
+	char in[SG_DATA_SIZE] = {0};
+
+	strncpy(in, cert, len);
 
     if ( (bp=BIO_new(BIO_s_mem())) == NULL){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "unable to create BIO for output\n");
         goto finish;
     }
-
-    PEM_write_bio_PrivateKey(bp, pkey, NULL, NULL, 0, NULL, NULL);
-    len = BIO_read(bp, pubkey, SG_DATA_SIZE);
-    if(len <= 0) {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Error reading signature file");
-        goto free_err;
+	BIO_printf(bp, "%s", in);
+	x509 = PEM_read_bio_X509(bp, NULL, NULL, NULL);
+	if(NULL == x509) {
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to read pem file\n");
+        goto err;
     }
-    pubkey[len] = '\0';
-
-free_err:
-    BIO_free(bp);
+err:
+	BIO_free(bp);
 finish:
-	return;
+	return x509;
 }
 
 /*
@@ -540,84 +670,9 @@ redis_reget_callback(redisAsyncContext __attribute__((__unused__))*cl_ctx,
 
     evhttp_socket_send(evh_req, reply->str);
 
-    kfree(request->sendbuf);
+    kfree(request->odata);
     kfree(request);
     return;
-}
-
-static void __attribute__((__unused__))
-redis_set_callback(redisAsyncContext *cl_ctx, void *r,
-                   void *privdata)
-{
-    struct request_t *request      = (struct request_t *)privdata;
-    struct evhttp_request *evh_req = request->evh_req;
-
-    redisReply *reply   = (redisReply*)r;
-
-    if(reply->type == REDIS_REPLY_ERROR){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Set redis data(key = %s) returns failed", request->host);
-        goto finish;
-    }
-    /*
-        Synchronous reader data is +OK
-        Asynchronous redis data is $-1\r\n+OK
-    */
-
-    libevent_thread *thread  = threads + request->t_id;
-    redisReader *reader      = cl_ctx->c.reader;
-
-    switch (reader->buf[5]) {
-        case '+' :
-            mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Writing data(key = %s) to redis successfully", request->host);
-            FS_internal_operate(SGstats.handle, thread->column_ids, SGstats.line_ids[2], FS_OP_ADD, 1);
-
-            evhttp_socket_send(evh_req, request->sendbuf);
-            goto free;
-        case '\0':
-        case '$' :
-            mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Writing data(key = %s) to redis failed", request->host);
-            FS_internal_operate(SGstats.handle, thread->column_ids, SGstats.line_ids[1], FS_OP_ADD, 1);
-
-            redisAsyncCommand(cl_ctx, redis_reget_callback, request, "GET %s", request->host);
-            goto finish;
-        default  :
-            mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Read redis data(key = %s) return code failed", request->host);
-            evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
-            goto free;
-    }
-
-free:
-    kfree(request->sendbuf);
-    kfree(request);
-finish:
-    return;
-}
-
-static
-int create_client_key(EVP_PKEY** pkey, char *pubkey, int bits)
-{
-    RSA *rsa = NULL;
-    EVP_PKEY *pk = NULL;
-
-    if((pk = EVP_PKEY_new()) == NULL){
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "create_client_key, gen new key failed!");
-        goto err;
-    }
-
-    rsa = RSA_generate_key(bits, RSA_F4, NULL, NULL);
-    if(!EVP_PKEY_assign_RSA(pk, rsa)){
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "create_client_key, assign key failed!");
-        EVP_PKEY_free(pk);
-        goto err;
-    }
-    x509_get_private_key(pk, pubkey);
-    rsa = NULL;
-
-    *pkey = pk;
-    return 1;
-
-err:
-    return 0;
 }
 
 int add_cert_ctx(X509_NAME* name, char* ctx[], int num)
@@ -729,19 +784,45 @@ err:
     return NULL;
 }
 
-int x509_online_append(char *host, EVP_PKEY *key, X509 *root, char *ca_s, char *pubkey)
+static uint64_t
+x509_online_append(X509 *origin, int id, char *root, char *sign, char *pkey)
 {
-    struct config_bucket_t *rte = cert_default_config();
+	void *res = NULL;
+    uint64_t expire_after = 0;
 
-    X509* x509 = x509_modify_by_cert(root, key, host, pubkey, rte->days);
-    if (!x509){
+    struct key_ring_list *keyring = &cert_default_config()->keyring;
+
+    res = MESA_htable_search(keyring->htable, (const uchar *)&id, sizeof(int));
+    if (!res){
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The table where keyringid = %d was not found", 1);
         goto finish;
     }
-    x509_get_msg_from_ca(x509, ca_s);
 
-    X509_free(x509);
+    struct pxy_obj_keyring *pxy_obj = (struct pxy_obj_keyring *)res;
+    if (pxy_obj->is_valid != 1){
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Table information is invalid");
+        goto finish;
+    }
+    if (STRCMP(pxy_obj->type, "root") == 0 ||
+        STRCMP(pxy_obj->type, "intermediate") == 0){
+        //X509* x509 = x509_modify_by_cert(pxy_obj->root, pxy_obj->key, host, pkey, pxy_obj->expire_after);
+        X509* x509 = x509_modify_by_cert_bak(pxy_obj->root, pxy_obj->key, origin, pkey,
+                                             pxy_obj->expire_after, NULL, NULL);
+
+        if (!x509){
+            goto finish;
+        }
+        expire_after = pxy_obj->expire_after;
+        x509_get_msg_from_ca(x509, sign);
+        x509_get_msg_from_ca(pxy_obj->root, root);
+
+        X509_free(x509);
+    }
+    if (STRCMP(pxy_obj->type, "end-entity")){
+    }
+
 finish:
-    return 0;
+    return expire_after;
 }
 
 static char readBytes(char *str)
@@ -757,7 +838,8 @@ static char readBytes(char *str)
 }
 
 static int
-rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request, char *sendbuf)
+rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request,
+                char *odata, uint64_t expire_after)
 {
     int xret = -1;
     redisReply *reply;
@@ -765,8 +847,8 @@ rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request, char *send
     libevent_thread *thread        = threads + request->t_id;
     struct evhttp_request *evh_req = request->evh_req;
 
-    reply = (redisReply *)redisCommand(thread->sync, "set %s %s ex %d nx", request->host, sendbuf,
-                                             sizeof_seconds(cert_default_config()->days));
+    reply = (redisReply *)redisCommand(thread->sync, "set %s %s ex %d nx", request->host, odata,
+                                             sizeof_seconds(expire_after));
     if (NULL == reply)
         goto free;
 
@@ -775,7 +857,7 @@ rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request, char *send
             mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Writing data(key = %s) to redis successfully", request->host);
             FS_internal_operate(SGstats.handle, thread->column_ids, SGstats.line_ids[2], FS_OP_ADD, 1);
 
-            evhttp_socket_send(evh_req, request->sendbuf);
+            evhttp_socket_send(evh_req, request->odata);
             goto free;
         case '$' :
             mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Writing data(key = %s) to redis failed", request->host);
@@ -793,66 +875,123 @@ rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request, char *send
 
 free:
     freeReplyObject(reply);
-    kfree(request->sendbuf);
+    kfree(request->odata);
     kfree(request);
 
 finish:
     return xret;
 }
 
+static inline json_object *
+web_json_record_array_add_string(char **chain)
+{
+    int i;
+    json_object *sample_array;
+
+    sample_array = json_object_new_array();
+    if (sample_array == NULL)
+        goto finish;
+
+    for(i = 0; chain[i] != '\0'; i++){
+        json_object_array_add(sample_array, json_object_new_string(chain[i]));
+    }
+finish:
+    return sample_array;
+}
+
+static inline int
+json_data_rebuild(const char *data,
+                 size_t size,
+                 char **odata,
+                 size_t *osize)
+{
+    size_t real_size = size + 1; /** 2, '\n' + '\0' */
+
+    if (!data || !size)
+        return -1;
+
+    *odata = malloc (real_size);
+    if (!*odata)
+        return -1;
+    memset (*odata, 0, real_size);
+    snprintf(*odata, real_size, "%s", data);
+
+    *osize = real_size;
+
+    return 0;
+}
+
 static int
-redis_encode_sendbuf(struct request_t *request, redisAsyncContext *c)
+web_json_table_add(char *privatekey, char *sign,
+                   char **chain, char **data)
+{
+    size_t osize = 0;
+    const char *jstr = NULL;
+    struct json_object *outline = json_object_new_object();
+
+    json_object_object_add(outline, "CERTIFICATE_CHAIN", web_json_record_array_add_string(chain));
+	json_object_object_add(outline, "PRIVATE_KEY", json_object_new_string(privatekey));
+    json_object_object_add(outline, "CERTIFICATE", json_object_new_string(sign));
+
+    jstr = json_object_to_json_string (outline);
+
+    json_data_rebuild(jstr, strlen(jstr), data, &osize);
+
+    json_object_put(outline);
+
+    return 0;
+}
+
+static int
+redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
 {
     int xret = -1;
+    uint64_t expire_after;
     uint64_t startTime = 0, endTime = 0;
-    libevent_thread *thread        = threads + request->t_id;
-    char cert[SG_DATA_SIZE]        = {0}, pubkey[SG_DATA_SIZE] = {0};
-
-    char *sendbuf = (char *)kmalloc(SG_DATA_SIZE * 2, MPF_CLR, -1);
+    libevent_thread *thread         = threads + request->t_id;
+    char sign[SG_DATA_SIZE]         = {0}, pkey[SG_DATA_SIZE] = {0};
+    char root[SG_DATA_SIZE]         = {0};
 
     startTime        = rt_time_ns();
-
-    x509_online_append(request->host, thread->key, thread->root, cert, pubkey);
-    if (cert[0] == '\0' && pubkey[0] == '\0'){
+    expire_after = x509_online_append(request->origin, request->kering_id, root, sign, pkey);
+    if (sign[0] == '\0' && pkey[0] == '\0'){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to issue certificate");
         evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
         goto finish;
     }
-
     endTime           = rt_time_ns();
     thread->diffTime += (endTime - startTime);
 
     mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "%lu - %lu = %lu\n", startTime, endTime, endTime - startTime);
 
     FS_internal_operate(SGstats.handle, thread->column_ids, SGstats.line_ids[3], FS_OP_SET, thread->diffTime);
-
     FS_internal_operate(SGstats.handle, thread->field_ids, 0, FS_OP_ADD, 1);
 
-    snprintf(sendbuf, SG_DATA_SIZE * 2 - 1, "%s%s", pubkey, cert);
-
-    request->sendbuf = sendbuf;
-#ifdef RD_SYNC
-    xret = rediSyncCommand(c, request, sendbuf);
+#if 0
+    char *chain[6] ={0};
+    chain[0] = root;
+    chain[1] = sign;
+    web_json_table_add(pkey, sign, chain, &request->odata);
 #else
-    xret = redisAsyncCommand(c, redis_set_callback, request, "set %s %s ex %d nx",
-                             request->host, sendbuf, sizeof_seconds(cert_default_config()->days));
+    request->odata = (char *)malloc(SG_DATA_SIZE * 2);
+    snprintf(request->odata, SG_DATA_SIZE * 2 - 1, "%s%s%s", pkey, sign, root);
 #endif
+    xret = rediSyncCommand(c, request, request->odata, expire_after);
     if (xret < 0){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to set information to redis server");
         goto finish;
     }
     xret = 0;
-
 finish:
     return xret;
 }
 
 static int
-redis_decode_sendbuf(struct request_t *request, redisReply *reply)
+redis_clnt_send(struct request_t *request, redisReply *reply)
 {
     int xret                       = -1;
 
-    char sendbuf[SG_DATA_SIZE * 2] = {0};
+    char odata[SG_DATA_SIZE * 2] = {0};
     libevent_thread *thread        = threads + request->t_id;
 
     if (!reply && !reply->str){
@@ -864,9 +1003,9 @@ redis_decode_sendbuf(struct request_t *request, redisReply *reply)
 
     FS_internal_operate(SGstats.handle, thread->field_ids, 0, FS_OP_ADD, 1);
 
-    snprintf(sendbuf, SG_DATA_SIZE * 2, "%s", reply->str);
+    snprintf(odata, SG_DATA_SIZE * 2, "%s", reply->str);
 
-    evhttp_socket_send(request->evh_req, sendbuf);
+    evhttp_socket_send(request->evh_req, odata);
 
 finish:
     kfree(request);
@@ -884,13 +1023,13 @@ void redis_get_callback(redisAsyncContext *c, void *r, void *privdata)
         case REDIS_REPLY_STRING:
             mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Sends the certificate information to the requestor");
 
-            xret = redis_decode_sendbuf(request, reply);
+            xret = redis_clnt_send(request, reply);
             break;
 
         case REDIS_REPLY_NIL:
             mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Generating certificate information");
 
-            xret = redis_encode_sendbuf(request, c);
+            xret = redis_clnt_pdu_send(request, c);
             break;
         default:
             break;
@@ -899,15 +1038,11 @@ void redis_get_callback(redisAsyncContext *c, void *r, void *privdata)
     return;
 }
 
-int x509_privatekey_init(EVP_PKEY **key, X509 **root)
+int x509_privatekey_init(char *private_file, char *public_file,
+                         EVP_PKEY **key, X509 **root)
 {
     int xret = -1;
 	FILE *fp; RSA *rsa = NULL;
-    char key_path[128] = {0}, cert_path[128] = {0};
-    struct config_bucket_t *rte = cert_default_config();
-
-    snprintf(key_path, sizeof(key_path), "%s/%s", rte->ca_path, DEFAULT_PRIVATEKEY_NAME);
-    snprintf(cert_path, sizeof(cert_path), "%s/%s", rte->ca_path, DEFAULT_CA_CERTIFICATE);
 
 	*key = EVP_PKEY_new();
     if (NULL == *key){
@@ -919,9 +1054,9 @@ int x509_privatekey_init(EVP_PKEY **key, X509 **root)
         goto pkey_free;
     }
 
-    fp = fopen(key_path, "r");
+    fp = fopen(private_file, "r");
     if (NULL == fp){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", key_path);
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", private_file);
         RSA_free(rsa);
         goto pkey_free;
     }
@@ -933,9 +1068,9 @@ int x509_privatekey_init(EVP_PKEY **key, X509 **root)
     fclose(fp);
 
     BIO *in;
-    in = BIO_new_file(cert_path, "r");
+    in = BIO_new_file(public_file, "r");
     if (!in){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", cert_path);
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", public_file);
         goto pkey_free;
     }
 
@@ -955,37 +1090,114 @@ finish:
     return xret;
 }
 
-static int
-ev_decode_uri(const char *uri, char *host,
-           int *flag, int *valid)
+#define BURSIZE 4096
+
+int hex2dec(char c)
 {
-    const char *fg    = NULL, *vl = NULL, *hst = NULL;
-    char *decoded_uri = NULL;
+    if ('0' <= c && c <= '9') {
+        return c - '0';
+    } else if ('a' <= c && c <= 'f') {
+        return c - 'a' + 10;
+    } else if ('A' <= c && c <= 'F') {
+        return c - 'A' + 10;
+    } else {
+        return -1;
+    }
+}
+
+void _urldecode(char url[])
+{
+    int i = 0;
+    int len = strlen(url);
+    int res_len = 0;
+    char res[BURSIZE];
+
+    if(!strchr(url, '%'))
+        return;
+
+    for (i = 0; i < len; ++i) {
+        char c = url[i];
+        if (c != '%') {
+            res[res_len++] = c;
+        } else {
+            char c1 = url[++i];
+            char c0 = url[++i];
+            int num = 0;
+            num = hex2dec(c1) * 16 + hex2dec(c0);
+            res[res_len++] = num;
+        }
+    }
+    res[res_len] = '\0';
+    strcpy(url, res);
+}
+
+static char*
+decode_capture(const char *uri, const char *key)
+{
+    int size = 0;
+    char *origin_uri = NULL;
+
+    char *urlecode = STRSTR(uri, key);
+    if (!urlecode){
+        size = 0;
+    }else{
+        size = strlen(urlecode);
+    }
+    int len = strlen(uri) - size;
+    origin_uri = (char *)malloc(len + 1);
+    memcpy(origin_uri, uri, len);
+
+    return origin_uri;
+}
+
+static char*
+decode_origin_cert(const char *uri, const char *key)
+{
+    char *origin = NULL;
+
+    char *urlecode = STRSTR(uri, key);
+    if (!urlecode){
+        goto finish;
+    }
+    origin = urlecode + 12;
+    _urldecode(origin);
+finish:
+    return origin;
+}
+
+static int
+thread_decode_uri(const char *uri, char *host,
+             int *flag, X509 **origin, int *keyring_id)
+{
+    const char *fg = NULL, *cert = NULL;
+    const char *ht = NULL, *id = NULL;
+    char *decoded_uri = NULL, *ecode_uri = NULL;
     struct evkeyvalq params;
 
-    decoded_uri = evhttp_decode_uri(uri);
+    decoded_uri = evhttp_decode_uri(ecode_uri = decode_capture(uri, "origin_cert"));
     if (!decoded_uri){
         goto finish;
     }
+    evhttp_parse_query(uri, &params);
 
-    evhttp_parse_query(decoded_uri, &params);
-
-    hst = evhttp_find_header(&params, "host");
-    if (hst[0] != '\0')
-        memcpy(host, hst, strlen(hst));
-
+    ht = evhttp_find_header(&params, "host");
+    if (ht != NULL)
+        memcpy(host, ht, strlen(ht));
     fg = evhttp_find_header(&params, "flag");
     if (fg)
         *flag = atoi(fg);
-
-    vl = evhttp_find_header(&params, "valid");
-    if (vl)
-        *valid = atoi(vl);
+    id = evhttp_find_header(&params, "kering_id");
+    if (id)
+        *keyring_id = atoi(id);
+    cert = decode_origin_cert(uri, "origin_cert");
+    if (cert)
+        *origin = x509_get_ca_from_msg(cert, STRLEN(cert));
 
     evhttp_clear_headers(&params);
     free(decoded_uri);
 
 finish:
+    free(ecode_uri);
     return 0;
 }
 
@@ -1026,20 +1238,20 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
         request->t_id = t->id;
         request->evh_req   = evh_req;
     }
-
 	switch (evhttp_request_get_command(evh_req)) {
         case EVHTTP_REQ_GET: cmdtype = "GET";     break;
         default:             cmdtype = "unknown"; break;
 	}
-
     FS_internal_operate(SGstats.handle, t->column_ids, SGstats.line_ids[0], FS_OP_ADD, 1);
 
-    ev_decode_uri(uri, request->host, &request->flag, &request->valid);
-    mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "[Thread %d]Received a %s request for %s, host:%s, flag:%d, valid:%d\nHeaders:",
+    thread_decode_uri(uri, request->host, &request->flag, &request->origin, &request->kering_id);
+    mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "[Thread %d]Received a %s request for %s, host:%s, flag:%d, valid:%p\nHeaders:",
 	                 request->t_id,  cmdtype, uri, request->host,
-                     request->flag, request->valid);
+                     request->flag, request->origin);
 
-    if (request->host[0] == '\0' || !request->evh_req){
+    if (request->host[0] == '\0' ||
+        request->origin == NULL ||
+        !request->evh_req){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to resolve the request url");
         kfree(request);
         evhttp_uri_free(decoded);
@@ -1100,12 +1312,6 @@ cert_task_private_init(struct event_base *base, libevent_thread *me)
         goto finish;
     }
 
-    /* Initialize the X509 CA*/
-    xret = x509_privatekey_init(&me->key, &me->root);
-    if (xret < 0 || !me->key || !me->root){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the x509 certificate");
-        goto finish;
-    }
 finish:
     return xret;
 }
@@ -1169,23 +1375,19 @@ evhttp_listen_socket_byuser(const struct sockaddr *sa, int socklen,
 
 	if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (void*)&on, sizeof(on))<0)
 		goto err;
-
 	if (flags & LEV_OPT_REUSEABLE) {
 		if (evutil_make_listen_socket_reuseable(fd) < 0)
 			goto err;
 	}
-
 	if (flags & LEV_OPT_REUSEABLE_PORT) {
 		if (evutil_make_listen_socket_reuseable_port(fd) < 0){
 			goto err;
         }
 	}
-
 	if (sa) {
 		if (bind(fd, sa, socklen)<0)
 			goto err;
 	}
-
     if (listen(fd, backlog) == -1) {
         goto err;
     }
@@ -1230,7 +1432,6 @@ libevent_socket_init()
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Could not create a listen!\n");
         goto finish;
     }
-
     threads = calloc(thread_nu, sizeof(libevent_thread));
     if (! threads) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Can't allocate thread descriptors");
@@ -1247,12 +1448,10 @@ libevent_socket_init()
         thread->routine   = pthread_worker_libevent;
 
         fs_screen_preview(thread);
-
         if (pthread_create(&thread->pid, thread->attr, thread->routine, &threads[tid])){
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "%s", strerror(errno));
 			goto finish;
 		}
-
 		if (pthread_detach(thread->pid)){
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "%s", strerror(errno));
 			goto finish;
@@ -1296,17 +1495,22 @@ void sigproc(int __attribute__((__unused__))sig)
             redisAsyncDisconnect(thread->cl_ctx);
             redisFree(thread->sync);
         }
-        X509_free(thread->root);
-        EVP_PKEY_free(thread->key);
+        key_ring_list_destroy(rte->keyring.htable);
     }
     kfree(threads);
 
     exit(1);
 }
 
-static int cert_screen_init()
+static int
+MESA_internal_set_para(screen_stat_handle_t handle, enum FS_option type, unsigned value)
 {
-	int value=0;
+	int ret = FS_internal_set_para(handle, type, &value, (int)(sizeof(value)));
+    return ret;
+}
+
+static int mesa_fiel_stat_init()
+{
 	char stat_path[63] = {0};
     char pname[32]= {0}, buff[128] = {0};
 
@@ -1314,32 +1518,24 @@ static int cert_screen_init()
 
     rt_get_pname_by_pid(getpid(), &pname[0]);
 	FS_internal_set_para(SGstats.handle, APP_NAME, pname, strlen(pname)+1);
-	value=0;
-	FS_internal_set_para(SGstats.handle, FLUSH_BY_DATE, &value, sizeof(value));
-
     snprintf(stat_path, 63, "%s/fs2_%s.status", logging_sc_lid.run_log_path, pname);
 	FS_internal_set_para(SGstats.handle, OUTPUT_DEVICE, stat_path, strlen(stat_path)+1);
-	value=1;
-	FS_internal_set_para(SGstats.handle, PRINT_MODE, &value, sizeof(value));
-	value=1;
-	FS_internal_set_para(SGstats.handle, CREATE_THREAD, &value, sizeof(value));
-	value=3;
-	FS_internal_set_para(SGstats.handle, STAT_CYCLE, &value, sizeof(value));
+
+	MESA_internal_set_para(SGstats.handle, FLUSH_BY_DATE, 0);
+	MESA_internal_set_para(SGstats.handle, PRINT_MODE, 1);
+	MESA_internal_set_para(SGstats.handle, CREATE_THREAD, 1);
+	MESA_internal_set_para(SGstats.handle, STAT_CYCLE, 3);
 
     snprintf(buff,sizeof(buff),"%s", "Req");
     SGstats.line_ids[0] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
-
     snprintf(buff,sizeof(buff),"%s", "DB");
     SGstats.line_ids[1] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
-
     snprintf(buff,sizeof(buff),"%s", "Local");
     SGstats.line_ids[2] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
-
     snprintf(buff,sizeof(buff),"%s", "take-time");
     SGstats.line_ids[3] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
 
-    value=SGstats.line_ids[3];
-	FS_internal_set_para(SGstats.handle, ID_INVISBLE, &value, sizeof(value));
+	MESA_internal_set_para(SGstats.handle, ID_INVISBLE, SGstats.line_ids[3]);
     snprintf(buff,sizeof(buff),"Cert/Nsec");
     FS_internal_register_ratio(SGstats.handle, SGstats.line_ids[3],
                                SGstats.line_ids[2], 1,
@@ -1350,14 +1546,134 @@ static int cert_screen_init()
     return 0;
 }
 
-int cert_session_init()
+void Maat_read_entry_start_cb(int update_type, void* u_para)
 {
     int xret = 0;
 
-    cert_screen_init();
+    struct key_ring_list *keyring = (struct key_ring_list *)u_para;
+
+    if (update_type != 1)
+        goto finish;
+
+    /** The current behavior is full, and the original keyring chain is deleted */
+    if (keyring->htable){
+        key_ring_list_destroy(keyring);
+    }
+
+    xret = key_ring_list_create(keyring);
+    if (xret == 0){
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The initial keyring list was successful, addr is %p\n",
+                         keyring->htable);
+    }
+finish:
+	return;
+}
+
+static void
+Maat_read_entry_cb(int __attribute__((__unused__))table_id, const char* table_line,
+                   void *u_para)
+{
+    int xret = 0;
+	struct pxy_obj_keyring *pxy_obj = NULL;
+	char private_file[512] = {0}, public_file[512] = {0};
+
+    struct key_ring_list *keyring = (struct key_ring_list *)u_para;
+
+    pxy_obj = (struct pxy_obj_keyring *)malloc(sizeof(struct pxy_obj_keyring));
+    if (!pxy_obj){
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Can not alloc, %s\n", strerror(errno));
+        goto finish;
+    }
+    memset(pxy_obj, 0, sizeof(struct pxy_obj_keyring));
+	sscanf(table_line, "%d\t%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d", &pxy_obj->id, &pxy_obj->service, pxy_obj->name,
+		   pxy_obj->type, private_file, public_file, &pxy_obj->expire_after, pxy_obj->public_algo,
+		   pxy_obj->ctl, &pxy_obj->is_valid);
+    xret = x509_privatekey_init(private_file, public_file, &pxy_obj->key, &pxy_obj->root);
+    if (xret < 0 || !pxy_obj->key || !pxy_obj->root){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the x509 certificate, the keyring id is %d",
+                         pxy_obj->id);
+        goto finish;
+    }
+
+    MESA_htable_add(keyring->htable, (const uchar *)(&(pxy_obj->id)), sizeof(int), pxy_obj);
+    keyring->sum_cnt++;
+
+finish:
+	return;
+}
+
+void Maat_read_entry_finish_cb(void* u_para)
+{
+	long long version=0;
+	Maat_feather_t feather = u_para;
+	int ret = 0, is_last_updating_table = 0;
+
+	ret = Maat_inter_read_state(feather,MAAT_STATE_VERSION, &version, sizeof(version));
+	assert(ret==0);
+
+	ret = Maat_inter_read_state(feather,MAAT_STATE_LAST_UPDATING_TABLE, &is_last_updating_table, sizeof(is_last_updating_table));
+	assert(ret==0);
+	//printf("Maat Version %lld at plugin finish callback, is_last_update=%d.\n",version,is_last_updating_table);
+
+	return;
+}
+
+int sample_plugin_table(Maat_feather_t feather,const char* table_name,
+					    Maat_start_callback_t *start,Maat_update_callback_t *update,Maat_finish_callback_t *finish,
+					    void *u_para,
+					    void __attribute__((__unused__))*logger)
+{
+	int table_id = 0,ret = 0;
+	table_id = Maat_inter_table_register(feather,table_name);
+	if(table_id == -1){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Database table %s register failed.\n",table_name);
+	}else{
+		ret = Maat_inter_table_callback_register(feather, table_id, start,
+								                update, finish, u_para);
+		if(ret < 0){
+            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Maat callback register table %s error.\n",table_name);
+		}
+	}
+
+	return ret;
+}
+
+int maat_feather_init()
+{
+    Maat_feather_t feather = NULL;
+	int scan_interval_ms = 1, effective_interval_ms = 0;
+
+    struct config_bucket_t *rte = cert_default_config();
+
+	feather = Maat_inter_feather(rte->thread_nu, rte->info_path, logging_sc_lid.run_log_handle);
+
+	Maat_inter_set_feather_opt(feather, MAAT_OPT_INSTANCE_NAME, "certstore", strlen("certstore") + 1);
+
+
+    Maat_inter_set_feather_opt(feather, MAAT_OPT_JSON_FILE_PATH, rte->pxy_path, strlen(rte->pxy_path)+1);
+    Maat_inter_set_feather_opt(feather, MAAT_OPT_SCANDIR_INTERVAL_MS,&scan_interval_ms, sizeof(scan_interval_ms));
+	Maat_inter_set_feather_opt(feather, MAAT_OPT_EFFECT_INVERVAL_MS,&effective_interval_ms, sizeof(effective_interval_ms));
+	Maat_inter_initiate_feather(feather);
+
+    /*Keyring list initialization **/
+    key_ring_list_create(&rte->keyring);
+
+	sample_plugin_table(feather, "PXY_OBJ_KEYRING",
+					    Maat_read_entry_start_cb,
+					    Maat_read_entry_cb,
+					    Maat_read_entry_finish_cb,
+					    &rte->keyring,
+    				    NULL);
+    return 0;
+}
+
+int cert_session_init()
+{
+    mesa_fiel_stat_init();
+
+    maat_feather_init();
 
     libevent_socket_init();
-
-    return xret;
+    return 0;
 }
 
