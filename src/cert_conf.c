@@ -20,10 +20,11 @@
 
 struct config_bucket_t certConfig = {
     .thread_nu = 1,
-    .days = 30,
-    .e_port = 9995,
-    .r_ip = "0.0.0.0",
-	.r_port = 3366,
+    .expire_after = 30,
+    .info_path = "/home/test",
+    .pxy_path  = "/home/test",
+    .def_path  = "/home/test",
+    .addr_t = {9995, 3336, "0.0.0.0"},
 };
 
 struct config_bucket_t *cert_default_config()
@@ -42,23 +43,32 @@ static int load_system_config(char *config)
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the number of running threads failed");
     }
 
-    xret = MESA_load_profile_string_nodef(config, "CONFIG", "table_info", rte->info_path, 128);
+    xret = MESA_load_profile_uint_nodef(config, "CONFIG", "expire_after", &(rte->expire_after));
     if (xret < 0){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the table_info path failed");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the number of valid time failed");
     }
-    if(!rt_file_exsit(rte->info_path)) {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "The table_info(%s) does not exist", rte->info_path);
+
+    xret = MESA_load_profile_string_nodef(config, "CONFIG", "def-ca-path", rte->def_path, 128);
+    if (xret < 0 && !rt_dir_exsit(rte->def_path)){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the def path failed or the (%s) does not exist",
+                         rte->def_path);
+        goto finish;
+    }
+
+    xret = MESA_load_profile_string_nodef(config, "CONFIG", "table_info", rte->info_path, 128);
+    if (xret < 0 && !rt_file_exsit(rte->info_path)){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the table info failed or the (%s) does not exist",
+                         rte->info_path);
         goto finish;
     }
 
     xret = MESA_load_profile_string_nodef(config, "CONFIG", "pxy_obj_keyring", rte->pxy_path, 128);
-    if (xret < 0){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the pxy_obj_keyring path failed");
-    }
-    if(!rt_file_exsit(rte->pxy_path)) {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "The pxy_obj_keyring(%s) does not exist", rte->pxy_path);
+    if (xret < 0 && !rt_file_exsit(rte->pxy_path)){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the pxy obj keyring failed or the (%s) does not exist",
+                         rte->pxy_path);
         goto finish;
     }
+
 finish:
     return xret;
 }
@@ -69,19 +79,19 @@ static int load_module_config(char *config)
 
     struct config_bucket_t *rte = cert_default_config();
 
-    xret = MESA_load_profile_short_nodef(config, "LIBEVENT", "port", (short *)&(rte->e_port));
+    xret = MESA_load_profile_short_nodef(config, "LIBEVENT", "port", (short *)&(rte->addr_t.e_port));
     if (xret < 0){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Libevent Port invalid\n");
         goto finish;
     }
 
-    xret = MESA_load_profile_string_nodef(config, "REDIS", "ip", rte->r_ip, 16);
+    xret = MESA_load_profile_string_nodef(config, "REDIS", "ip", rte->addr_t.r_ip, 16);
     if (xret < 0){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Ip invalid\n");
         goto finish;
     }
 
-    xret = MESA_load_profile_short_nodef(config, "REDIS", "port", (short *)&(rte->r_port));
+    xret = MESA_load_profile_short_nodef(config, "REDIS", "port", (short *)&(rte->addr_t.r_port));
     if (xret < 0){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Redis Port invalid\n");
         goto finish;

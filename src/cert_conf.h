@@ -18,13 +18,12 @@
 #include "MESA_htable.h"
 
 struct request_t{
-#define DATALEN 64
-    int t_id;
-    int flag;
-    X509 *origin;
-    int kering_id;
-    char host[DATALEN];
+#define DATALEN 128
+    int thread_id;
     char *odata;
+    X509 *origin;
+    int keyring_id;
+    char rkey[DATALEN];
     struct evhttp_request *evh_req;
 };
 
@@ -43,25 +42,23 @@ struct pxy_obj_keyring{
 
 struct key_ring_list
 {
-	uint64_t sum_cnt;
-	MESA_htable_handle htable;
+    uint64_t sum_cnt;
+    MESA_htable_handle htable, oldhtable;
+};
+
+struct _initer_addr_t{
+    uint16_t e_port;    /* libevent prot*/
+    uint16_t r_port;    /* redis port*/
+    char r_ip[16];      /* redis ip */
 };
 
 struct config_bucket_t{
     unsigned int thread_nu;
-
-    unsigned int days;
-
+	unsigned int expire_after;
     char info_path[128];
-
     char pxy_path[128];
-
-    uint16_t e_port;    /* libevent prot*/
-
-    char r_ip[16];      /* redis ip */
-
-    uint16_t r_port;    /* redis port*/
-
+    char def_path[128];
+    struct _initer_addr_t addr_t;
     struct key_ring_list keyring;
 };
 

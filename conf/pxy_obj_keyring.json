@@ -73,12 +73,13 @@
         {
             "table_name": "PXY_OBJ_KEYRING",
             "table_content": [
-                "1\t1\tname_01\troot\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1",
-                "2\t1\tname_02\troot\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1",
+                "1\t1\tname_01\troot\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t15\trsa2048\tnull\t1",
+                "2\t1\tname_02\troot\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t90\trsa2048\tnull\t1",
                 "3\t1\tname_03\troot\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1",
-                "4\t1\tname_04\tintermediate\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1",
-                "5\t1\tname_05\tintermediate\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1",
-                "6\t1\tname_06\tintermediate\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1"
+                "4\t1\tname_04\tend-entity\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1",
+                "5\t1\tname_05\tintermediate\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t0",
+                "6\t1\tname_06\tintermediate\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer\t30\trsa2048\tnull\t1",
+				"256\t1\tinsec\troot\t/home/fengweihao/workspace/cert_store/ca/mesalab-insec-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-insec-cert.cer\t30\trsa2048\tnull\t1"
             ]
         }
     ]

@@ -81,13 +81,13 @@ void cert_preview ()
 
     printf("\r\nBasic Configuration of CertStore \n");
     printf("%30s:%45d\n", "The Threads", rte->thread_nu);
-    printf("%30s:%45s\n", "Redis Ip", rte->r_ip);
-    printf("%30s:%45d\n", "Redis Port", rte->r_port);
-    printf("%30s:%45d\n", "Libevent Port", rte->e_port);
+    printf("%30s:%45s\n", "Redis Ip", rte->addr_t.r_ip);
+    printf("%30s:%45d\n", "Redis Port", rte->addr_t.r_port);
+    printf("%30s:%45d\n", "Libevent Port", rte->addr_t.e_port);
+    printf("%30s:%45s\n", "Def Cert Path", rte->def_path);
+    printf("%30s:%45s\n", "Log Directory", logging_sc_lid.run_log_path);
     printf("%30s:%45s\n", "Table Info", rte->info_path);
     printf("%30s:%45s\n", "Pxy Obj Keyring", rte->pxy_path);
-    printf("%30s:%45s\n", "Log Directory", logging_sc_lid.run_log_path);
-
     printf("\r\n");
 }
 

@@ -12,6 +12,12 @@
 #include "MESA_list_queue.h"
 #include "rt_sync.h"
 
+struct x509_object_ctx
+{
+    X509 *root;
+    EVP_PKEY *key;
+};
+
 typedef struct {
     int  id;
 
@@ -21,9 +27,7 @@ typedef struct {
 
     rt_pthread_attr *attr;
 
-    EVP_PKEY *key;
-
-    X509 *root;
+    struct x509_object_ctx def;
 
     struct redisAsyncContext *cl_ctx;
 
