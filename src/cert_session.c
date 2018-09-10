@@ -258,33 +258,112 @@ ssl_x509_v3ext_copy_by_nid(X509 *crt, X509 *origcrt, int nid)
 	ext = X509_get_ext(origcrt, pos);
 	if (!ext)
 		return -1;
+
 	if (X509_add_ext(crt, ext, -1) != 1)
 		return -1;
+
 	return 1;
 }
-#if 0
 static int
-x509_get_cn_name(X509 *origcrt, char *cn_name)
+x509_alt_name_cmp(unsigned char *name, char *extraname)
 {
-    int len = 0, xret = -1;
-    X509_NAME *subject = NULL;
+    return strcmp((char *)name, extraname);
+}
 
-	subject = X509_get_subject_name(origcrt);
-    if (!subject){
+static int
+x509_get_alt_name(X509 *x509, char *extraname)
+{
+    int i, xret = 1;
+
+    if (x509 == NULL || extraname == NULL){
+        xret = 0;
         goto finish;
     }
-    len = X509_NAME_get_text_by_NID(subject, NID_commonName, cn_name, 256);
-    if (len > 0){
-        xret = 0;
+
+    GENERAL_NAMES* subjectAltNames = (GENERAL_NAMES*)X509_get_ext_d2i(x509, NID_subject_alt_name, NULL, NULL);
+    int cnt = sk_GENERAL_NAME_num(subjectAltNames);
+
+    for (i = 0; i < cnt; i++) {
+        GENERAL_NAME* generalName = sk_GENERAL_NAME_value(subjectAltNames, i);
+
+        xret = x509_alt_name_cmp(ASN1_STRING_data(GENERAL_NAME_get0_value(generalName, NULL)), extraname);
+        if (xret == 0)
+            break;
     }
 finish:
     return xret;
 }
-#endif
+
+/*
+ * Add extension using V3 code: we can set the config file as NULL because we
+ * wont reference any other sections.
+ */
+
+int add_ext(X509 *cacrt, X509 *cert, int nid, char *value)
+{
+    X509_EXTENSION *ex;
+    X509V3_CTX ctx;
+    /* This sets the 'context' of the extensions. */
+    /* No configuration database */
+    X509V3_set_ctx_nodb(&ctx);
+    /*
+     * Issuer and subject certs: both the target since it is self signed, no
+     * request and no CRL
+     */
+    X509V3_set_ctx(&ctx, cacrt, cert, NULL, NULL, 0);
+    ex = X509V3_EXT_conf_nid(NULL, &ctx, nid, value);
+    if (!ex)
+        return 0;
+
+    X509_add_ext(cert, ex, -1);
+    X509_EXTENSION_free(ex);
+    return 1;
+}
+
+static char*
+x509_get_CrlDistPoints(X509 *x509)
+{
+    int i = 0, crit = 0;
+	char value[512] = {0}, *crlurl = NULL;
+	CRL_DIST_POINTS *crlpoints = NULL;
+
+    crlpoints = (CRL_DIST_POINTS*)X509_get_ext_d2i(x509, NID_crl_distribution_points, &crit, NULL);
+    if (!crlpoints)
+        goto finish;
+
+    for (i = 0; i < sk_DIST_POINT_num(crlpoints); i++){
+		int j, gtype;
+		GENERAL_NAMES *gens;
+		GENERAL_NAME *gen;
+		ASN1_STRING *uri;
+		DIST_POINT *dp = sk_DIST_POINT_value(crlpoints, i);
+		if (!dp->distpoint || dp->distpoint->type != 0)
+			continue;
+		gens = dp->distpoint->name.fullname;
+		for (j = 0; j < sk_GENERAL_NAME_num(gens); j++){
+			gen = sk_GENERAL_NAME_value(gens, j);
+			uri = (ASN1_STRING*)GENERAL_NAME_get0_value(gen, &gtype);
+            if (gtype == GEN_URI && ASN1_STRING_length(uri) > 6) {
+                char *uptr = (char *)ASN1_STRING_data(uri);
+				if (STRLEN(value) > 0){
+					STRCAT(value, " | ");
+				}
+				STRCAT(value, uptr);
+			}
+		}
+	}
+	CRL_DIST_POINTS_free(crlpoints);
+
+    crlurl = (char *)malloc(strlen(value) + 5);
+    assert(crlurl);
+    sprintf(crlurl, "URI:%s", value);
+finish:
+    return crlurl;
+}
 
 X509 *
-x509_modify_by_cert_bak(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
-                        int days, const char *extraname, const char *crlurl)
+x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
+                        int days, char *extraname)
 {
 	int rv;
 	X509 *crt = NULL;
@@ -315,7 +394,6 @@ x509_modify_by_cert_bak(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
 	    !X509_set_pubkey(crt, key))
 		goto errout;
 
-	/* add standard v3 extensions; cf. RFC 2459 */
 //extensions
 	X509V3_CTX ctx;
 	X509V3_set_ctx(&ctx, cacrt, crt, NULL, NULL, 0);
@@ -351,11 +429,8 @@ x509_modify_by_cert_bak(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
 	if (rv == -1)
 		goto errout;
 
-    char *crlurlval;
-	if (crlurl) {
-        crlurlval = (char *)malloc(strlen(crlurl) + 1);
-		if (sprintf(crlurlval, "URI:%s", crlurl) < 0)
-			goto errout;
+    char *crlurlval = x509_get_CrlDistPoints(origcrt);
+	if (crlurlval) {
 		if (ssl_x509_v3ext_add(&ctx, crt, "crlDistributionPoints",
 		                       crlurlval) == -1) {
 			free(crlurlval);
@@ -365,7 +440,7 @@ x509_modify_by_cert_bak(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
 	}
 
     char *cfval;
-	if (!extraname) {
+	if (x509_get_alt_name(origcrt, extraname) == 0) {
 		/* no extraname provided: copy original subjectAltName ext */
 		if (ssl_x509_v3ext_copy_by_nid(crt, origcrt,
 		                               NID_subject_alt_name) == -1)
@@ -374,7 +449,7 @@ x509_modify_by_cert_bak(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
 		names = (GENERAL_NAMES *)X509_get_ext_d2i(origcrt, NID_subject_alt_name, 0, 0);
 		if (!names) {
 			/* no subjectAltName present: add new one */
-            cfval = (char *)malloc(strlen(extraname) + 1);
+            cfval = (char *)malloc(strlen(extraname) + 5);
 			if (sprintf(cfval, "DNS:%s", extraname) < 0)
 				goto errout;
 			if (ssl_x509_v3ext_add(&ctx, crt, "subjectAltName",
@@ -563,54 +638,6 @@ finish:
 	return x509;
 }
 
-/*
- * Add extension using V3 code: we can set the config file as NULL because we
- * wont reference any other sections.
- */
-
-int add_ext(X509 *cacrt, X509 *cert, int nid, char *value)
-{
-    X509_EXTENSION *ex;
-    X509V3_CTX ctx;
-    /* This sets the 'context' of the extensions. */
-    /* No configuration database */
-    X509V3_set_ctx_nodb(&ctx);
-    /*
-     * Issuer and subject certs: both the target since it is self signed, no
-     * request and no CRL
-     */
-    X509V3_set_ctx(&ctx, cacrt, cert, NULL, NULL, 0);
-    ex = X509V3_EXT_conf_nid(NULL, &ctx, nid, value);
-    if (!ex)
-        return 0;
-
-    X509_add_ext(cert, ex, -1);
-    X509_EXTENSION_free(ex);
-    return 1;
-}
-
-#if 0
-static int fs_internal_operate(int id, int id2, int column_id, int column_id2, long long diffTime)
-{
-    int ret = -1;
-    screen_stat_handle_t handle = SGstats.handle;
-
-    FS_internal_operate(handle, id, column_id, FS_OP_ADD, 1);
-
-    if (id2 < 0)
-        goto finish;
-
-    FS_internal_operate(handle, id2, 0, FS_OP_ADD, 1);
-
-    if (column_id2 < 0)
-        goto finish;
-
-	ret = FS_internal_operate(handle, id, column_id2, FS_OP_SET, diffTime);
-finish:
-    return ret;
-}
-#endif
-
 static
 int redis_rsync_init(struct event_base *base, struct redisAsyncContext **cl_ctx)
 {
@@ -721,7 +748,7 @@ int rand_serial(BIGNUM *b, ASN1_INTEGER *ai)
     return ret;
 }
 
-X509 *x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, const char* host,
+X509 *x509_modify_by_cert_bak(X509 *cacrt, EVP_PKEY *cakey, const char* host,
                           char *pubkey, const int days)
 {
     X509* x = NULL;
@@ -786,7 +813,7 @@ err:
 
 static int
 x509_online_append(struct x509_object_ctx *def, X509 *origin, int id,
-                   char *root, char *sign, char *pkey)
+                   char *sni, char *root, char *sign, char *pkey)
 {
 	void *odata = NULL;
     int _expire = 0;
@@ -822,8 +849,8 @@ x509_online_append(struct x509_object_ctx *def, X509 *origin, int id,
        _expire = pxy_obj->expire_after;
     }
 
-    X509* x509 = x509_modify_by_cert_bak(_root, _key, origin, pkey,
-                                         _expire, NULL, NULL);
+    X509* x509 = x509_modify_by_cert(_root, _key, origin, pkey,
+                                         _expire, sni);
     if (!x509){
         goto finish;
     }
@@ -963,7 +990,8 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
     char root[SG_DATA_SIZE] = {0};
 
     startTime        = rt_time_ns();
-    expire_after = x509_online_append(&info->def, request->origin, request->keyring_id, root, sign, pkey);
+    expire_after = x509_online_append(&info->def, request->origin, request->keyring_id, request->sni,
+                                      root, sign, pkey);
     if (sign[0] == '\0' && pkey[0] == '\0'){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to sign certificate\n");
         evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
@@ -977,7 +1005,7 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
     FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[3], FS_OP_SET, info->diffTime);
     FS_internal_operate(SGstats.handle, info->field_ids, 0, FS_OP_ADD, 1);
 
-#if 0
+#if 1
     char *chain[6] ={0};
     chain[0] = root;
     chain[1] = sign;
@@ -988,7 +1016,6 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
 #endif
     xret = rediSyncCommand(c, request, request->odata, expire_after);
     if (xret < 0){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to set information to redis server\n");
         goto finish;
     }
     xret = 0;
@@ -1176,9 +1203,9 @@ finish:
 }
 
 static int
-thread_decode_uri(const char *uri, X509 **origin, int *keyring_id)
+thread_decode_uri(const char *uri, X509 **origin, int *keyring_id, char *sni)
 {
-    const char *cert = NULL, *id = NULL;
+    const char *_origin = NULL, *id = NULL, *_sni = NULL;
     char *decoded_uri = NULL, *ecode_uri = NULL;
     struct evkeyvalq params;
 
@@ -1187,12 +1214,16 @@ thread_decode_uri(const char *uri, X509 **origin, int *keyring_id)
         goto finish;
     }
     evhttp_parse_query(uri, &params);
-    id = evhttp_find_header(&params, "kering_id");
+    id   = evhttp_find_header(&params, "kering_id");
     if (id)
         *keyring_id = atoi(id);
-    cert = decode_origin_cert(uri, "origin_cert");
-    if (cert)
-        *origin = x509_get_ca_from_msg(cert, STRLEN(cert));
+    _sni = evhttp_find_header(&params, "sni");
+    if (_sni)
+         memcpy(sni, _sni, strlen(_sni));
+
+    _origin = decode_origin_cert(uri, "origin_cert");
+    if (_origin)
+        *origin = x509_get_ca_from_msg(_origin, STRLEN(_origin));
 
     evhttp_clear_headers(&params);
     free(decoded_uri);
@@ -1260,9 +1291,9 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
 	}
     FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[0], FS_OP_ADD, 1);
 
-    thread_decode_uri(uri, &request->origin, &request->keyring_id);
-    mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "[Thread %d]Received a %s request for uri, kering_id:%d, origin:%p\n",
-                     request->thread_id, cmdtype, request->keyring_id, request->origin);
+    thread_decode_uri(uri, &request->origin, &request->keyring_id, request->sni);
+    mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "[Thread %d]Received a %s request for uri, kering_id:%d, sni:%s origin:%p\n",
+                     request->thread_id, cmdtype, request->keyring_id, request->sni, request->origin);
 
     if (request->origin == NULL || !request->evh_req){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to resolve the request url");
@@ -1592,7 +1623,7 @@ void Maat_read_entry_start_cb(int update_type, void* u_para)
     keyring->oldhtable  = key_ring_list_create();
     keyring->sum_cnt = 0;
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The initial key ring list was successful, addr is %p\n",
-                     keyring->htable);
+                     keyring->oldhtable);
 finish:
 	return;
 }
@@ -1624,7 +1655,7 @@ Maat_read_entry_cb(int __attribute__((__unused__))table_id, const char* table_li
         goto finish;
     }
 
-    MESA_htable_add(keyring->htable, (const uchar *)(&(pxy_obj->id)), sizeof(int), pxy_obj);
+    MESA_htable_add(keyring->oldhtable, (const uchar *)(&(pxy_obj->id)), sizeof(int), pxy_obj);
     keyring->sum_cnt++;
 
 finish:

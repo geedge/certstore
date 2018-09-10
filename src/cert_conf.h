@@ -23,6 +23,7 @@ struct request_t{
     char *odata;
     X509 *origin;
     int keyring_id;
+    char sni[DATALEN];
     char rkey[DATALEN];
     struct evhttp_request *evh_req;
 };
