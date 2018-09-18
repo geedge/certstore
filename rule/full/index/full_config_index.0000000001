@@ -1,0 +1,3 @@
+COMPILE	1	../rule/full/COMPILE.local
+GROUP	2	../rule/full/GROUP.local
+PXY_OBJ_KEYRING	7	../rule/full/PXY_OBJ_KEYRING.local

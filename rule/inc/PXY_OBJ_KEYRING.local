@@ -1,0 +1,8 @@
+0000000007
+1	1	name_01	root	/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key	/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer	15	rsa2048	null	1
+2	1	name_02	root	/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key	/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer	90	rsa2048	null	1
+3	1	name_03	root	/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key	/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer	30	rsa2048	null	1
+4	1	name_04	end-entity	/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key	/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer	30	rsa2048	null	1
+5	1	name_05	intermediate	/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key	/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer	30	rsa2048	null	0
+6	1	name_06	intermediate	/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key	/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer	30	rsa2048	null	1
+256	1	insec	root	/home/fengweihao/workspace/cert_store/ca/mesalab-insec-cert.key	/home/fengweihao/workspace/cert_store/ca/mesalab-insec-cert.cer	30	rsa2048	null	1

@@ -86,8 +86,15 @@ void cert_preview ()
     printf("%30s:%45d\n", "Libevent Port", rte->addr_t.e_port);
     printf("%30s:%45s\n", "Def Cert Path", rte->def_path);
     printf("%30s:%45s\n", "Log Directory", logging_sc_lid.run_log_path);
-    printf("%30s:%45s\n", "Table Info", rte->info_path);
-    printf("%30s:%45s\n", "Pxy Obj Keyring", rte->pxy_path);
+    printf("%30s:%45s\n", "Table Info", rte->maat_t.info_path);
+    if (rte->maat_t.maat_json_switch == 1){
+        printf("%30s:%45s\n", "Pxy Obj Keyring", rte->maat_t.pxy_path);
+    }
+    if (rte->maat_t.maat_json_switch == 0){
+        printf("%30s:%45s\n", "Full Cfg Path", rte->maat_t.full_cfg_dir);
+        printf("%30s:%45s\n", "Inc  Cfg Path", rte->maat_t.inc_cfg_dir);
+
+    }
     printf("\r\n");
 }
 

@@ -53,12 +53,19 @@ struct _initer_addr_t{
     char r_ip[16];      /* redis ip */
 };
 
+struct ntc_maat_t{
+    unsigned int  maat_json_switch;
+    char info_path[128];
+    char pxy_path[128];
+    char inc_cfg_dir[128];
+    char full_cfg_dir[128];
+};
+
 struct config_bucket_t{
     unsigned int thread_nu;
 	unsigned int expire_after;
-    char info_path[128];
-    char pxy_path[128];
     char def_path[128];
+    struct ntc_maat_t maat_t;
     struct _initer_addr_t addr_t;
     struct key_ring_list keyring;
 };

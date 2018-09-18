@@ -285,7 +285,6 @@ x509_get_alt_name(X509 *x509, char *extraname)
 
     for (i = 0; i < cnt; i++) {
         GENERAL_NAME* generalName = sk_GENERAL_NAME_value(subjectAltNames, i);
-
         xret = x509_alt_name_cmp(ASN1_STRING_data(GENERAL_NAME_get0_value(generalName, NULL)), extraname);
         if (xret == 0)
             break;
@@ -1572,14 +1571,14 @@ MESA_internal_set_para(screen_stat_handle_t handle, enum FS_option type, unsigne
 
 static int mesa_fiel_stat_init()
 {
-	char stat_path[63] = {0};
+	char stat_path[128] = {0};
     char pname[32]= {0}, buff[128] = {0};
 
 	SGstats.handle = FS_internal_create_handle();
 
     rt_get_pname_by_pid(getpid(), &pname[0]);
 	FS_internal_set_para(SGstats.handle, APP_NAME, pname, strlen(pname)+1);
-    snprintf(stat_path, 63, "%s/fs2_%s.status", logging_sc_lid.run_log_path, pname);
+    snprintf(stat_path, 128, "%s/fs2_%s.status", logging_sc_lid.run_log_path, pname);
 	FS_internal_set_para(SGstats.handle, OUTPUT_DEVICE, stat_path, strlen(stat_path)+1);
 
 	MESA_internal_set_para(SGstats.handle, FLUSH_BY_DATE, 0);
@@ -1695,15 +1694,26 @@ int sample_plugin_table(Maat_feather_t feather,const char* table_name,
 
 int maat_feather_init()
 {
+	int wait_second = 0;
     Maat_feather_t feather = NULL;
 	int scan_interval_ms = 1, effective_interval_ms = 0;
 
     struct config_bucket_t *rte = cert_default_config();
+    struct ntc_maat_t *maat_t = &rte->maat_t;
 
-	feather = Maat_inter_feather(rte->thread_nu, rte->info_path, logging_sc_lid.run_log_handle);
+	feather = Maat_inter_feather(rte->thread_nu, maat_t->info_path, logging_sc_lid.run_log_handle);
 
 	Maat_inter_set_feather_opt(feather, MAAT_OPT_INSTANCE_NAME, "certstore", strlen("certstore") + 1);
-    Maat_inter_set_feather_opt(feather, MAAT_OPT_JSON_FILE_PATH, rte->pxy_path, strlen(rte->pxy_path)+1);
+
+    if (maat_t->maat_json_switch == 1){
+        Maat_inter_set_feather_opt(feather, MAAT_OPT_JSON_FILE_PATH, maat_t->pxy_path, strlen(maat_t->pxy_path)+1);
+    }
+    if (maat_t->maat_json_switch == 0){
+        Maat_inter_set_feather_opt(feather, MAAT_OPT_FULL_CFG_DIR, maat_t->full_cfg_dir, strlen(maat_t->full_cfg_dir)+1);
+        Maat_inter_set_feather_opt(feather, MAAT_OPT_INC_CFG_DIR, maat_t->inc_cfg_dir, strlen(maat_t->inc_cfg_dir)+1);
+        wait_second = 14;
+    }
+
     Maat_inter_set_feather_opt(feather, MAAT_OPT_SCANDIR_INTERVAL_MS,&scan_interval_ms, sizeof(scan_interval_ms));
 	Maat_inter_set_feather_opt(feather, MAAT_OPT_EFFECT_INVERVAL_MS,&effective_interval_ms, sizeof(effective_interval_ms));
 	Maat_inter_initiate_feather(feather);
@@ -1714,6 +1724,7 @@ int maat_feather_init()
 					    Maat_read_entry_finish_cb,
 					    &rte->keyring,
     				    NULL);
+	sleep(wait_second);
     return 0;
 }
 
