@@ -38,13 +38,13 @@ static void TellWaitingParent (pid_t pid) {
  */
 static void WaitForChild (pid_t pid) {
     int status;
-    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Daemon: Parent waiting for child to be ready...\n");
+    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Daemon: Parent waiting for child to be ready...");
     /* Wait until child signals is ready */
     while (sigflag == 0) {
         if (waitpid(pid, &status, WNOHANG)) {
             /* Check if the child is still there, otherwise the parent should exit */
             if (WIFEXITED(status) || WIFSIGNALED(status)) {
-                mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Child died unexpectedly\n");
+                mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Child died unexpectedly");
                 exit(EXIT_FAILURE);
             }
         }
@@ -107,14 +107,14 @@ void daemonize (void) {
         TellWaitingParent(getppid());
 
         /* Daemon is up and running */
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Daemon is running\n");
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Daemon is running");
         return;
     }
     /* Parent continues here, waiting for child to be ready */
-    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Parent is waiting for child to be ready\n");
+    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Parent is waiting for child to be ready");
     WaitForChild(pid);
 
     /* Parent exits */
-    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Child is ready, parent exiting\n");
+    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Child is ready, parent exiting");
     exit(EXIT_SUCCESS);
 }

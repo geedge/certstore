@@ -64,19 +64,19 @@ static int load_module_config(char *config)
 
     xret = MESA_load_profile_short_nodef(config, "LIBEVENT", "port", (short *)&(rte->addr_t.e_port));
     if (xret < 0){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Libevent Port invalid\n");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Libevent Port invalid");
         goto finish;
     }
 
     xret = MESA_load_profile_string_nodef(config, "REDIS", "ip", rte->addr_t.r_ip, 16);
     if (xret < 0){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Ip invalid\n");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Ip invalid");
         goto finish;
     }
 
     xret = MESA_load_profile_short_nodef(config, "REDIS", "port", (short *)&(rte->addr_t.r_port));
     if (xret < 0){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Redis Port invalid\n");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Redis Port invalid");
         goto finish;
     }
 finish:
@@ -102,7 +102,7 @@ static int load_maat_config(char *config)
     }
 
     if (maat_t->maat_json_switch == 1){
-        xret = MESA_load_profile_string_nodef(config, "CONFIG", "pxy_obj_keyring", maat_t->pxy_path, 128);
+        xret = MESA_load_profile_string_nodef(config, "NTC_MAAT", "pxy_obj_keyring", maat_t->pxy_path, 128);
          if (xret < 0 && !rt_file_exsit(maat_t->pxy_path)){
              mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the pxy obj keyring failed or the (%s) does not exist",
                               maat_t->pxy_path);

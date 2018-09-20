@@ -104,7 +104,7 @@ int main(int argc, char **argv)
 
     cert_syslog_init(CERT_BASIC_CFG);
 
-    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Cert server init success\n");
+    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Cert server init success");
 
     cert_init_config(CERT_BASIC_CFG);
 

@@ -20,6 +20,7 @@
 struct request_t{
 #define DATALEN 128
     int thread_id;
+    int is_valid;
     char *odata;
     X509 *origin;
     int keyring_id;
@@ -35,7 +36,7 @@ struct pxy_obj_keyring{
     X509 *root;
 	char name[128];
 	char type[128];
-	char ctl[256];
+	char ctl[512];
 	char public_algo[256];
 	uint64_t expire_after;
 	int is_valid;
