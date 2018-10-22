@@ -2,11 +2,11 @@
 /*
 *****************Maat Network Flow Rule Manage Framework********
 *	Maat is the Goddess of truth and justice in ancient Egyptian concept.
-*	Her feather was the measure that determined whether the souls (considered
+*	Her feather was the measure that determined whether the souls (considered 
 *	to reside in the heart) of the departed would reach the paradise of afterlife
 *	successfully.
 *	Author: zhengchao@iie.ac.cn,MESA
-*	Version 2018-07-27 huge service_define
+*	Version 2018-09-25 foreign key and rule tags.
 *	NOTE: MUST compile with G++
 *	All right reserved by Institute of Infomation Engineering,Chinese Academic of Science 2014~2018
 *********************************************************
@@ -105,17 +105,17 @@ struct sub_item_pos_t
 
 struct Maat_region_pos_t
 {
-
+	
 	int region_id;
 	int sub_item_num;
-	struct sub_item_pos_t sub_item_pos[MAAT_MAX_EXPR_ITEM_NUM];
+	struct sub_item_pos_t sub_item_pos[MAAT_MAX_EXPR_ITEM_NUM];	
 };
 
 struct Maat_hit_detail_t
 {
 	int config_id;//set <0 if half hit;
 	int hit_region_cnt;
-	struct Maat_region_pos_t region_pos[MAAT_MAX_HIT_RULE_NUM];
+	struct Maat_region_pos_t region_pos[MAAT_MAX_HIT_RULE_NUM];	
 };
 //--------------------HITTING DETAIL DESCRIPTION END
 
@@ -125,7 +125,7 @@ Maat_feather_t Maat_summon_feather(int max_thread_num,
 								const char* ful_cfg_dir,
 								const char* inc_cfg_dir,
 								void*logger);//MESA_handle_logger
-//Abondon interface ,left for compatible.
+//Abondon interface ,left for compatible. 
 Maat_feather_t Maat_summon_feather_json(int max_thread_num,
 									const char* table_info_path,
 									const char* json_rule,
@@ -141,10 +141,10 @@ enum MAAT_INIT_OPT
 	MAAT_OPT_FULL_CFG_DIR,			//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1.DEFAULT: no default.
 	MAAT_OPT_INC_CFG_DIR,			//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1.DEFAULT: no default.
 	MAAT_OPT_JSON_FILE_PATH,		//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1.DEFAULT: no default.
-	MAAT_OPT_STAT_ON,				//VALUE is  NULL,SIZE is 0. MAAT_OPT_STAT_FILE_PATH must be set. Default: stat OFF.
-	MAAT_OPT_PERF_ON,				//VALUE is NULL,SIZE is 0. MAAT_OPT_STAT_FILE_PATH must be set. Default: stat OFF.
+	MAAT_OPT_STAT_ON,				//VALUE is NULL, SIZE is 0. MAAT_OPT_STAT_FILE_PATH must be set. Default: stat OFF.
+	MAAT_OPT_PERF_ON,				//VALUE is NULL, SIZE is 0. MAAT_OPT_STAT_FILE_PATH must be set. Default: stat OFF.
 	MAAT_OPT_STAT_FILE_PATH,		//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1. DEFAULT: no default.
-	MAAT_OPT_SCAN_DETAIL,			//VALUE is interger *, SIZE=sizeof(int). 0: not return any detail;1: return  hit pos, not include regex grouping;
+	MAAT_OPT_SCAN_DETAIL,			//VALUE is interger *, SIZE=sizeof(int). 0: not return any detail;1: return  hit pos, not include regex grouping.
 									//  2 return hit pos and regex grouping pos;DEFAULT:0
 	MAAT_OPT_INSTANCE_NAME,			//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1, no more than 11 bytes.DEFAULT: MAAT_$tableinfo_path$.
 	MAAT_OPT_DECRYPT_KEY,			//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1. No DEFAULT.
@@ -154,15 +154,18 @@ enum MAAT_INIT_OPT
 	MAAT_OPT_CMD_AUTO_NUMBERING,	//VALUE is a interger *, 1 or 0, SIZE=sizeof(int). DEFAULT: 1.
 	MAAT_OPT_DEFERRED_LOAD,			//VALUE is NULL,SIZE is 0.  Default: Deffered initialization OFF.
 	MAAT_OPT_CUMULATIVE_UPDATE_OFF,	//VALUE is NULL,SIZE is 0.  Default: CUMMULATIVE UPDATE ON.
-	MAAT_OPT_LOAD_VERSION_FROM,		//VALUE is a long long, SIZE=sizeof(long long). Default: Load the Latest. Only valid in redis mode, and maybe failed for too old.
+	MAAT_OPT_LOAD_VERSION_FROM,		//VALUE is a long long, SIZE=sizeof(long long). Default: Load the Latest. Only valid in redis mode, and maybe failed for too old. 
 									//This option also disables background update.
-	MAAT_OPT_ENABLE_UPDATE			//VALUE is interger, SIZE=sizeof(int). 1: Enabled, 0:Disabled.  DEFAULT: Backgroud update is enabled. Runtime setting is allowed.
-};
+	MAAT_OPT_ENABLE_UPDATE,			//VALUE is interger, SIZE=sizeof(int). 1: Enabled, 0:Disabled.  DEFAULT: Backgroud update is enabled. Runtime setting is allowed.
+	MAAT_OPT_ACCEPT_TAGS,			//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1. Format is a JSON, e.g.{"tags":[{"tag":"location","value":"Beijing/ChaoYang/Huayan/22A"},{"tag":"isp","value":"telecom"}]}
+	MAAT_OPT_FOREIGN_CONT_DIR,		//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1. Specifies a local diretory to store foreign content. Default: []table_info_path]_files
+ 	MAAT_OPT_FOREIGN_CONT_LINGER		//VALUE is interger *, SIZE=sizeof(int). Greater than 0: delete after VALUE seconds; 0: delete foreign content right after the notification callbacks;  Less than 0: NEVER delete. Default: 0.
+ };
 //return -1 if failed, return 0 on success;
 int Maat_set_feather_opt(Maat_feather_t feather,enum MAAT_INIT_OPT  type,const void* value,int size);
 enum MAAT_STATE_OPT
 {
-	MAAT_STATE_VERSION=1,			//Get current maat version. VALUE is long long, SIZE=sizeof(long long).
+	MAAT_STATE_VERSION=1,			//Get current maat version. VALUE is long long, SIZE=sizeof(long long). 
 	MAAT_STATE_LAST_UPDATING_TABLE	//Query at Maat_finish_callback_t to determine whether this table is the last one to update. VALUE is interger, SIZE=sizeof(int), 1:yes, 0: no
 };
 int Maat_read_state(Maat_feather_t feather, enum MAAT_STATE_OPT  type, void* value, int size);
@@ -237,7 +240,7 @@ int Maat_similar_scan_string(Maat_feather_t feather,int table_id
 void Maat_clean_status(scan_status_t* mid);
 enum MAAT_RULE_OPT
 {
-	MAAT_RULE_SERV_DEFINE	//VALUE is a char* buffer,SIZE= buffer size.
+	MAAT_RULE_SERV_DEFINE	//VALUE is a char* buffer,SIZE= buffer size. 
 };
 int Maat_read_rule(Maat_feather_t feather, const struct Maat_rule_t* rule, enum MAAT_RULE_OPT type, void* value, int size);
 #endif	//	H_MAAT_RULE_H_INCLUDE

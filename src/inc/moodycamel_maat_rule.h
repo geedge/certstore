@@ -17,10 +17,10 @@ enum MAAT_INIT_OPT
 	MAAT_OPT_FULL_CFG_DIR,			//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1.DEFAULT: no default.
 	MAAT_OPT_INC_CFG_DIR,			//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1.DEFAULT: no default.
 	MAAT_OPT_JSON_FILE_PATH,		//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1.DEFAULT: no default.
-	MAAT_OPT_STAT_ON,				//VALUE is  NULL,SIZE is 0. MAAT_OPT_STAT_FILE_PATH must be set. Default: stat OFF.
-	MAAT_OPT_PERF_ON,				//VALUE is NULL,SIZE is 0. MAAT_OPT_STAT_FILE_PATH must be set. Default: stat OFF.
+	MAAT_OPT_STAT_ON,				//VALUE is NULL, SIZE is 0. MAAT_OPT_STAT_FILE_PATH must be set. Default: stat OFF.
+	MAAT_OPT_PERF_ON,				//VALUE is NULL, SIZE is 0. MAAT_OPT_STAT_FILE_PATH must be set. Default: stat OFF.
 	MAAT_OPT_STAT_FILE_PATH,		//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1. DEFAULT: no default.
-	MAAT_OPT_SCAN_DETAIL,			//VALUE is interger *, SIZE=sizeof(int). 0: not return any detail;1: return  hit pos, not include regex grouping;
+	MAAT_OPT_SCAN_DETAIL,			//VALUE is interger *, SIZE=sizeof(int). 0: not return any detail;1: return  hit pos, not include regex grouping.
 									//  2 return hit pos and regex grouping pos;DEFAULT:0
 	MAAT_OPT_INSTANCE_NAME,			//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1, no more than 11 bytes.DEFAULT: MAAT_$tableinfo_path$.
 	MAAT_OPT_DECRYPT_KEY,			//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1. No DEFAULT.
@@ -32,8 +32,11 @@ enum MAAT_INIT_OPT
 	MAAT_OPT_CUMULATIVE_UPDATE_OFF,	//VALUE is NULL,SIZE is 0.  Default: CUMMULATIVE UPDATE ON.
 	MAAT_OPT_LOAD_VERSION_FROM,		//VALUE is a long long, SIZE=sizeof(long long). Default: Load the Latest. Only valid in redis mode, and maybe failed for too old.
 									//This option also disables background update.
-	MAAT_OPT_ENABLE_UPDATE			//VALUE is interger, SIZE=sizeof(int). 1: Enabled, 0:Disabled.  DEFAULT: Backgroud update is enabled. Runtime setting is allowed.
-};
+	MAAT_OPT_ENABLE_UPDATE,			//VALUE is interger, SIZE=sizeof(int). 1: Enabled, 0:Disabled.  DEFAULT: Backgroud update is enabled. Runtime setting is allowed.
+	MAAT_OPT_ACCEPT_TAGS,			//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1. Format is a JSON, e.g.{"tags":[{"tag":"location","value":"Beijing/ChaoYang/Huayan/22A"},{"tag":"isp","value":"telecom"}]}
+	MAAT_OPT_FOREIGN_CONT_DIR,		//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1. Specifies a local diretory to store foreign content. Default: []table_info_path]_files
+ 	MAAT_OPT_FOREIGN_CONT_LINGER		//VALUE is interger *, SIZE=sizeof(int). Greater than 0: delete after VALUE seconds; 0: delete foreign content right after the notification callbacks;  Less than 0: NEVER delete. Default: 0.
+ };
 
 enum MAAT_STATE_OPT
 {

@@ -22,7 +22,8 @@ struct config_bucket_t certConfig = {
     .thread_nu = 1,
     .expire_after = 30,
     .def_path  = "/home/test",
-    .addr_t = {9995, 3336, "0.0.0.0"},
+    .addr_t = {9995, 6379, "0.0.0.0", 0, 6379, "0.0.0.0"},
+    .keyring = {0, 0, NULL, NULL},
 };
 
 struct config_bucket_t *cert_default_config()
@@ -68,17 +69,36 @@ static int load_module_config(char *config)
         goto finish;
     }
 
-    xret = MESA_load_profile_string_nodef(config, "REDIS", "ip", rte->addr_t.r_ip, 16);
+    xret = MESA_load_profile_string_nodef(config, "MAAT_REDIS", "ip", rte->addr_t.maat_ip, 16);
     if (xret < 0){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Ip invalid");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Maat redis ip invalid");
         goto finish;
     }
 
-    xret = MESA_load_profile_short_nodef(config, "REDIS", "port", (short *)&(rte->addr_t.r_port));
+    xret = MESA_load_profile_short_nodef(config, "MAAT_REDIS", "port", (short *)&(rte->addr_t.maat_port));
     if (xret < 0){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Redis Port invalid");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Maat redis port invalid");
         goto finish;
     }
+
+    xret = MESA_load_profile_short_nodef(config, "MAAT_REDIS", "dbindex", (short *)&(rte->addr_t.dbindex));
+    if (xret < 0){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Maat redis dbindex invalid");
+        goto finish;
+    }
+
+    xret = MESA_load_profile_string_nodef(config, "CERTSTORE_REDIS", "ip", rte->addr_t.store_ip, 16);
+    if (xret < 0){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Certsotre redis ip invalid");
+        goto finish;
+    }
+
+    xret = MESA_load_profile_short_nodef(config, "CERTSTORE_REDIS", "port", (short *)&(rte->addr_t.store_port));
+    if (xret < 0){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Certsotre redis port invalid");
+        goto finish;
+    }
+
 finish:
     return xret;
 }
@@ -111,6 +131,10 @@ static int load_maat_config(char *config)
     }
 
     if (maat_t->maat_json_switch == 0){
+        xret = MESA_load_profile_uint_nodef(config, "NTC_MAAT", "effective_interval", &(maat_t->effective_interval_s));
+        if (xret < 0){
+            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the interval of scan failed");
+        }
         xret = MESA_load_profile_string_nodef(config, "NTC_MAAT", "inc_cfg_dir", maat_t->inc_cfg_dir, 128);
         if (xret < 0 && !rt_file_exsit( maat_t->inc_cfg_dir)){
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the table info failed or the (%s) does not exist",

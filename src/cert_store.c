@@ -25,7 +25,7 @@
 
 /* Configure Path */
 #if 0
-#define CERT_BASIC_CFG "/usr/local/etc/cert_store.yaml"
+#define CERT_BASIC_CFG "/home/ceiec/certstore_run/conf/cert_store.ini"
 #else
 #define CERT_BASIC_CFG "../conf/cert_store.ini"
 #endif
@@ -81,8 +81,11 @@ void cert_preview ()
 
     printf("\r\nBasic Configuration of CertStore \n");
     printf("%30s:%45d\n", "The Threads", rte->thread_nu);
-    printf("%30s:%45s\n", "Redis Ip", rte->addr_t.r_ip);
-    printf("%30s:%45d\n", "Redis Port", rte->addr_t.r_port);
+    printf("%30s:%45s\n", "Store Redis Ip", rte->addr_t.store_ip);
+    printf("%30s:%45d\n", "Store Redis Port", rte->addr_t.store_port);
+    printf("%30s:%45s\n", "Maat Redis Ip", rte->addr_t.maat_ip);
+    printf("%30s:%45d\n", "Maat Redis Port", rte->addr_t.maat_port);
+    printf("%30s:%45d\n", "Maat Redis index", rte->addr_t.dbindex);
     printf("%30s:%45d\n", "Libevent Port", rte->addr_t.e_port);
     printf("%30s:%45s\n", "Def Cert Path", rte->def_path);
     printf("%30s:%45s\n", "Log Directory", logging_sc_lid.run_log_path);
@@ -91,6 +94,7 @@ void cert_preview ()
         printf("%30s:%45s\n", "Pxy Obj Keyring", rte->maat_t.pxy_path);
     }
     if (rte->maat_t.maat_json_switch == 0){
+        printf("%30s:%45d\n", "Scan Interval", rte->maat_t.effective_interval_s);
         printf("%30s:%45s\n", "Full Cfg Path", rte->maat_t.full_cfg_dir);
         printf("%30s:%45s\n", "Inc  Cfg Path", rte->maat_t.inc_cfg_dir);
 

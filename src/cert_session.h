@@ -27,6 +27,8 @@ typedef struct {
 
     rt_pthread_attr *attr;
 
+	struct event_base *base;
+
     struct x509_object_ctx def;
 
     struct redisAsyncContext *cl_ctx;

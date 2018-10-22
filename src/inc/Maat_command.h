@@ -156,6 +156,8 @@ int Maat_cmd_set_group(Maat_feather_t feather, int group_id, const struct Maat_r
 //Return -1 for failed.
 int Maat_cmd_set_line(Maat_feather_t feather,const struct Maat_line_t* line_rule, enum MAAT_OPERATION op);
 int Maat_cmd_set_lines(Maat_feather_t feather,const struct Maat_line_t** line_rule, int line_num ,enum MAAT_OPERATION op);
+int Maat_cmd_set_file(Maat_feather_t feather,const char* key, const char* value, size_t size, enum MAAT_OPERATION op);
+
 //Return the value of key after the increment.
 //If the key does not exist, it is set to 0 before performing the operation.
 long long Maat_cmd_incrby(Maat_feather_t feather,const char* key, int increment);

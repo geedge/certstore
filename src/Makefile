@@ -51,7 +51,7 @@ OBJS += $(OBJS_$(dir))
 LDFLAGS_GLOBAL += -L ./lib -lapps -lcrypto -lssl -levent -lhiredis 
 LDFLAGS_GLOBAL += -L ./lib -lMESA_htable -lMESA_field_stat2 -lMESA_handle_logger -lMESA_prof_load
 LDFLAGS_GLOBAL += \
-                  -lpthread -lcrypt -lmaatframe -lm -lz -ldl -lstdc++ 
+                  -lpthread -lcrypt -lm -lz -ldl -lmaatframe -lstdc++ 
 
 CFLAGS_LOCAL = -std=gnu99 -g -O3 -W -Wall \
                -I.\

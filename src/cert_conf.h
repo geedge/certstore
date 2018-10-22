@@ -40,22 +40,29 @@ struct pxy_obj_keyring{
 	char public_algo[256];
 	uint64_t expire_after;
 	int is_valid;
+    STACK_OF(X509) *stack_ca;
 };
 
 struct key_ring_list
 {
+    int updata_type;
     uint64_t sum_cnt;
     MESA_htable_handle htable, oldhtable;
 };
 
 struct _initer_addr_t{
-    uint16_t e_port;    /* libevent prot*/
-    uint16_t r_port;    /* redis port*/
-    char r_ip[16];      /* redis ip */
+    uint16_t e_port;    /*libevent prot*/
+    uint16_t maat_port;    /*maat redis port*/
+    char maat_ip[16];      /*maat redis ip */
+    int dbindex;           /*maat redis dbindex*/
+
+    uint16_t store_port;   /*store redis port */
+    char store_ip[16];     /*store redis ip*/
 };
 
 struct ntc_maat_t{
-    unsigned int  maat_json_switch;
+    unsigned int maat_json_switch;
+    unsigned int effective_interval_s;
     char info_path[128];
     char pxy_path[128];
     char inc_cfg_dir[128];
