@@ -16,6 +16,9 @@ struct x509_object_ctx
 {
     X509 *root;
     EVP_PKEY *key;
+
+    X509 *insec_root;
+    EVP_PKEY *insec_key;
 };
 
 typedef struct {

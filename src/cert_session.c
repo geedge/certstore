@@ -49,8 +49,7 @@
 
 #define	WAIT_FOR_EFFECTIVE_US	1000*1000
 
-#define	SG_DATA_SIZE    8192
-#define SG_INSEC_ID     256
+#define	SG_DATA_SIZE    10240
 
 #define LOCAL_USER_PEN     1
 #define LOCAL_USER_DER     2
@@ -58,6 +57,9 @@
 
 #define DEFAULT_PRIVATEKEY_NAME  "mesalab-ca-cert.key"
 #define DEFAULT_CA_CERTIFICATE   "mesalab-ca-cert.cer"
+
+#define MESALAB_INSEC_CERT       "mesalab-insec-cert.cer"
+#define MESALAB_INSEC_KEY        "mesalab-insec-cert.key"
 
 #define	CM_UPDATE_TYPE_FULL	1
 #define	CM_UPDATE_TYPE_INC	2
@@ -974,12 +976,11 @@ err:
     return NULL;
 }
 
-static int
-x509_online_append(struct x509_object_ctx *def, X509 *origin, int id,
-                   char *sni, char *root, char *sign,
-                   char *pkey, STACK_OF(X509) **stack_ca)
+static int x509_online_append(struct x509_object_ctx *def, struct request_t *request,
+                               char *root, char *sign, char *pkey, STACK_OF(X509) **stack_ca)
 {
 	void *odata = NULL;
+    int is_valid = request->is_valid;
     int _expire = 0; char *_crl = NULL;
     X509 *_root = NULL; EVP_PKEY *_key = NULL;
 
@@ -988,10 +989,10 @@ x509_online_append(struct x509_object_ctx *def, X509 *origin, int id,
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "The approval certificate chain is empty");
         goto finish;
     }
-    odata = MESA_htable_search(keyring->htable, (const uchar *)&id, sizeof(int));
+    odata = MESA_htable_search(keyring->htable, (const uchar *)&(request->keyring_id), sizeof(int));
     if ( !odata ){
-        _root   = def->root;
-        _key    = def->key;
+        _root = (is_valid == 1) ? def->root : def->insec_root;
+        _key  = (is_valid == 1) ? def->key  : def->insec_key;
         _expire = cert_default_config()->expire_after;
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Sing certificates using local default certificates");
     } else {
@@ -999,7 +1000,6 @@ x509_online_append(struct x509_object_ctx *def, X509 *origin, int id,
         if (pxy_obj->is_valid != 1){
             pxy_obj->root = def->root;
             pxy_obj->key  = def->key;
-
         }else{
             if (!STRCMP(pxy_obj->type, "end-entity")){
                 mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate(%d) type is an entity certificate",
@@ -1015,13 +1015,13 @@ x509_online_append(struct x509_object_ctx *def, X509 *origin, int id,
                 *stack_ca = pxy_obj->stack_ca;
             }
         }
-        _root   = pxy_obj->root;
-        _key    = pxy_obj->key;
+        _root = (is_valid == 1) ? pxy_obj->root : def->insec_root;
+        _key  = (is_valid == 1) ? pxy_obj->key  : def->insec_key;
         _expire = pxy_obj->expire_after;
         _crl    = pxy_obj->ctl;
     }
-    X509* x509 = x509_modify_by_cert(_root, _key, origin, pkey,
-                                     _expire, sni, _crl);
+    X509* x509 = x509_modify_by_cert(_root, _key, request->origin, pkey,
+                                     _expire, request->sni, _crl);
     if (!x509){
         goto finish;
     }
@@ -1163,8 +1163,7 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
 
     startTime        = rt_time_ns();
 
-    expire_after = x509_online_append(&info->def, request->origin, request->keyring_id, request->sni,
-                                      root, sign, pkey, &stack_ca);
+    expire_after = x509_online_append(&info->def, request, root, sign, pkey, &stack_ca);
     if (sign[0] == '\0' && pkey[0] == '\0'){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to sign certificate");
         evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
@@ -1178,7 +1177,7 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
     FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[3], FS_OP_SET, info->diffTime);
     FS_internal_operate(SGstats.handle, info->field_ids, 0, FS_OP_ADD, 1);
 
-    char _chain[4][SG_DATA_SIZE];
+    char _chain[6][SG_DATA_SIZE];
     char *chain[6] = {0};
     if (stack_ca){
         for (i = 0; i < sk_X509_num(stack_ca); i++){
@@ -1220,7 +1219,6 @@ redis_clnt_send(struct request_t *request, redisReply *reply)
 {
     int xret                       = -1;
 
-    char odata[SG_DATA_SIZE * 2] = {0};
     libevent_thread *thread        = threads + request->thread_id;
 
     if (!reply && !reply->str){
@@ -1232,9 +1230,7 @@ redis_clnt_send(struct request_t *request, redisReply *reply)
 
     FS_internal_operate(SGstats.handle, thread->field_ids, 0, FS_OP_ADD, 1);
 
-    snprintf(odata, SG_DATA_SIZE * 2, "%s", reply->str);
-
-    evhttp_socket_send(request->evh_req, odata);
+    evhttp_socket_send(request->evh_req, reply->str);
 
 finish:
     kfree(request);
@@ -1336,8 +1332,6 @@ finish:
     return xret;
 }
 
-#define BURSIZE 4096
-
 int hex2dec(char c)
 {
     if ('0' <= c && c <= '9') {
@@ -1356,7 +1350,13 @@ void _urldecode(char url[])
     int i = 0;
     int len = strlen(url);
     int res_len = 0;
-    char res[BURSIZE];
+    char *res = NULL;
+
+    res = (char *)malloc(len + 1);
+    if (!res){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Url alloc faild");
+        return;
+    }
 
     if(!strchr(url, '%'))
         return;
@@ -1375,6 +1375,8 @@ void _urldecode(char url[])
     }
     res[res_len] = '\0';
     strcpy(url, res);
+
+    free(res);
 }
 
 static char*
@@ -1428,7 +1430,7 @@ thread_decode_uri(const char *uri, X509 **origin,
     id   = evhttp_find_header(&params, "keyring_id");
     if (id)
         *keyring_id = atoi(id);
-    _valid = evhttp_find_header(&params, "is_valid");
+    _valid = evhttp_find_header(&params, "is_vaild");
     if (_valid)
         *is_valid = atoi(_valid);
     _sni = evhttp_find_header(&params, "sni");
@@ -1496,8 +1498,10 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
 
 	request = (struct request_t *) kmalloc (sizeof(struct request_t), MPF_CLR, -1);
     if (request != NULL){
-        request->thread_id = info->id;
-        request->evh_req   = evh_req;
+        memset(request, 0, sizeof(struct request_t));
+        request->keyring_id = 0;
+        request->thread_id  = info->id;
+        request->evh_req    = evh_req;
     }
 	switch (evhttp_request_get_command(evh_req)) {
         case EVHTTP_REQ_GET: cmdtype = "GET";     break;
@@ -1507,8 +1511,9 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
 
     thread_decode_uri(uri, &request->origin, &request->keyring_id, request->sni,
                       &request->is_valid);
-    mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "[Thread %d]Received a %s request for uri, kering_id:%d, sni:%s origin:%p",
-                     request->thread_id, cmdtype, request->keyring_id, request->sni, request->origin);
+
+    mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "[Thread %d]Received a %s request for uri, kering_id:%d, sni:%s origin:%p valid:%d",
+                     request->thread_id, cmdtype, request->keyring_id, request->sni, request->origin, request->is_valid);
 
     if (request->origin == NULL || !request->evh_req){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to resolve the request url");
@@ -1524,7 +1529,7 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
     }
     mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Redis key is %s", request->rkey);
 
-    if (info->cl_ctx->err != 0){
+    if (info->cl_ctx->err != 0 || request->is_valid == 0){
         xret = redis_clnt_pdu_send(request, NULL);
         if (xret < 0)
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Local sign certificate failed");
@@ -1593,6 +1598,19 @@ task_private_init(struct event_base *base, libevent_thread *info)
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the x509 certificate");
         goto finish;
     }
+
+    /* Initialize the insec CA*/
+    memset(key_path, 0, 256);
+    memset(cert_path, 0, 256);
+    snprintf(key_path, sizeof(key_path), "%s/%s",   cert_default_config()->def_path, MESALAB_INSEC_KEY);
+    snprintf(cert_path, sizeof(cert_path), "%s/%s", cert_default_config()->def_path, MESALAB_INSEC_CERT);
+
+    xret = x509_privatekey_init(key_path, cert_path, &info->def.insec_key, &info->def.insec_root);
+    if (xret < 0 || !(info->def.key) || !(info->def.root)){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the insec x509 certificate");
+        goto finish;
+    }
+
 finish:
     return xret;
 }
