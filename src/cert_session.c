@@ -542,7 +542,7 @@ x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
 	    !X509_set_subject_name(crt, subject) ||
 	    !X509_set_issuer_name(crt, issuer) ||
 	    ssl_x509_serial_copyrand(crt, origcrt) == -1 ||
-	    !X509_gmtime_adj(X509_get_notBefore(crt), 0) ||
+	    !X509_gmtime_adj(X509_get_notBefore(crt), (long)(sizeof_seconds(-1))) ||
 	    !X509_time_adj_ex(X509_get_notAfter(crt), days, 0, NULL) ||
 	    !X509_set_pubkey(crt, key))
 		goto errout;
@@ -1430,7 +1430,7 @@ thread_decode_uri(const char *uri, X509 **origin,
     id   = evhttp_find_header(&params, "keyring_id");
     if (id)
         *keyring_id = atoi(id);
-    _valid = evhttp_find_header(&params, "is_vaild");
+    _valid = evhttp_find_header(&params, "is_valid");
     if (_valid)
         *is_valid = atoi(_valid);
     _sni = evhttp_find_header(&params, "sni");
