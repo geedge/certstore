@@ -27,7 +27,7 @@
 #if 0
 #define CERT_BASIC_CFG "/home/ceiec/certstore_run/conf/cert_store.ini"
 #else
-#define CERT_BASIC_CFG "../conf/cert_store.ini"
+#define CERT_BASIC_CFG "./conf/cert_store.ini"
 #endif
 
 static char* cert_revision() { return (CERT_GIT_RELEASE); }
@@ -42,7 +42,7 @@ static int run_mode;
 
 static void help()
 {
-  printf("Welcome to CertStor %s\n", cert_revision());
+  printf("Welcome to CertStore %s\n", cert_revision());
   printf("cert_store <--normal|--daemon>\n"
          "Usage:\n"
          "  --normal     | Run the program in normal mode\n"

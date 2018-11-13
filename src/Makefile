@@ -4,9 +4,9 @@ CERT_ROOT = ..
 endif
 
 MAJOR="1.0"
-BUILD="1.0" 
-BUILD_FINGERPRINT=$(MAJOR).$(BUILD)
-BUILD_FINGERPRINT2=$(strip $(BUILD_FINGERPRINT))
+BUILD=$(shell git log | grep -cE 'Author:.*<.*@.*>')
+BUILDSHA=$(shell git rev-parse --short HEAD)
+BUILD_FINGERPRINT=$(MAJOR).$(BUILD).$(BUILDSHA)
 
 # Default simulation parameters
 NUM_PROCESSORS=1
@@ -48,7 +48,7 @@ dir := ./inc
 include $(dir)/inc.mk
 OBJS += $(OBJS_$(dir)) 
 
-LDFLAGS_GLOBAL += -L ./lib -lapps -lcrypto -lssl -levent -lhiredis 
+LDFLAGS_GLOBAL += -L ./lib -lcrypto -lssl -levent -lhiredis 
 LDFLAGS_GLOBAL += -L ./lib -lMESA_htable -lMESA_field_stat2 -lMESA_handle_logger -lMESA_prof_load
 LDFLAGS_GLOBAL += \
                   -lpthread -lcrypt -lm -lz -ldl -lmaatframe -lstdc++ 
@@ -73,24 +73,7 @@ $(OBJ_DIR)/%.o: $(d)/%.c
 include $(CERT_ROOT)/make/application.mk
 
 tarball: cert_store
-	if [ ! -d "package/certstroe_run/bin" ]; then mkdir -p "package/certstore_run/bin/"; fi
-	if [ ! -d "package/certstroe_run/conf" ]; then mkdir -p "package/certstore_run/conf"; fi
-	if [ ! -d "package/certstroe_run/cert" ]; then mkdir -p "package/certstore_run/cert"; fi
-	if [ ! -d "package/certstroe_run/rule" ]; then mkdir -p "package/certstore_run/rule"; fi
-	cp cert_store package/certstore_run/bin/certstore1.0
-	cp ../conf/cert_store.ini package/certstore_run/conf/
-	cp ../conf/pxy_obj_keyring.json package/certstore_run/conf
-	cp ../conf/table_info.conf package/certstore_run/conf
-#	cp ../ca/mesalab-def-cert.cer package/certstore_run/cert
-#	cp ../ca/mesalab-def-cert.key package/certstore_run/cert
-	cp ../ca/* package/certstore_run/cert
-	cp package/Makefile package/certstore_run/
-	cp ../rule/* -rf package/certstore_run/rule/
-	cp package/run.sh package/certstore_run/
-	cd package && tar cpfz certstore_run.tar.gz certstore_run 
-	cd ..
-	mv package/certstore_run.tar.gz ../release/
-	rm -rf package/certstore_run
+	sh script/tarball.sh $(TARGET) $(MAJOR).$(BUILD) $(BUILDSHA)
 clean: 
 	rm -rf $(CLEAN_LIST)
 	rm -f $(TARGET)

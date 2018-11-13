@@ -980,15 +980,20 @@ static int x509_online_append(struct x509_object_ctx *def, struct request_t *req
                                char *root, char *sign, char *pkey, STACK_OF(X509) **stack_ca)
 {
 	void *odata = NULL;
+    X509* x509 = NULL;
     int is_valid = request->is_valid;
     int _expire = 0; char *_crl = NULL;
     X509 *_root = NULL; EVP_PKEY *_key = NULL;
 
     struct key_ring_list *keyring = &cert_default_config()->keyring;
     if (keyring->htable == NULL){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "The approval certificate chain is empty");
-        goto finish;
+         _root = (is_valid == 1) ? def->root : def->insec_root;
+        _key  = (is_valid == 1) ? def->key  : def->insec_key;
+        _expire = cert_default_config()->expire_after;
+        mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "The approval certificate chain is empty");
+        goto modify;
     }
+
     odata = MESA_htable_search(keyring->htable, (const uchar *)&(request->keyring_id), sizeof(int));
     if ( !odata ){
         _root = (is_valid == 1) ? def->root : def->insec_root;
@@ -1020,7 +1025,8 @@ static int x509_online_append(struct x509_object_ctx *def, struct request_t *req
         _expire = pxy_obj->expire_after;
         _crl    = pxy_obj->ctl;
     }
-    X509* x509 = x509_modify_by_cert(_root, _key, request->origin, pkey,
+modify:
+    x509 = x509_modify_by_cert(_root, _key, request->origin, pkey,
                                      _expire, request->sni, _crl);
     if (!x509){
         goto finish;
@@ -1986,7 +1992,7 @@ int sample_plugin_table(Maat_feather_t feather,const char* table_name,
 					    void __attribute__((__unused__))*logger)
 {
 	int table_id = 0,ret = 0;
-	table_id = Maat_inter_table_register(feather,table_name);
+	table_id = Maat_inter_table_register(feather, table_name);
 	if(table_id == -1){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Database table %s register failed.",table_name);
 	}else{

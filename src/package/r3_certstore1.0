@@ -1,0 +1,17 @@
+#!/bin/sh
+
+while [ 1 ]; do
+	count=`ls -l core.* |wc -l`
+        echo $count
+        if [ $count -lt 5 ]
+        then
+                echo "set unlimited"
+                ulimit -c unlimited
+        else
+                ulimit -c 0
+        fi
+
+	./certstore1.0 --normal  2>&1
+	echo program crashed, restart at `date +"%w %Y/%m/%d, %H:%M:%S"` >> RESTART.log
+    sleep 10
+done
