@@ -8,7 +8,7 @@
 #ifndef _RT_TMR_H
 #define _RT_TMR_H
 
-//#define RT_TMR_ADVANCED
+#define RT_TMR_ADVANCED
 
 extern void tmr_start(uint32_t uid);
 extern void tmr_stop(uint32_t uid);

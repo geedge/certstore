@@ -11,7 +11,7 @@ while [ 1 ]; do
                 ulimit -c 0
         fi
 
-	./certstore1.0 --normal  2>&1
+    ./certstore1.0 --normal > /dev/null
 	echo program crashed, restart at `date +"%w %Y/%m/%d, %H:%M:%S"` >> RESTART.log
     sleep 10
 done

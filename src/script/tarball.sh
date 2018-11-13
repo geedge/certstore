@@ -12,6 +12,7 @@ do_mkdir(){
     rm $X -rf
     mkdir $X
     mkdir $X/cert
+    mkdir $X/tool
 }
 
 do_copy(){
@@ -20,6 +21,8 @@ do_copy(){
     cp ../rule/ $X -rf
     cp ../src/cert_store $X/certstore1.0
     cp ../src/package/* $X
+    cp ../src/script/signssl.sh $X/tool
+    cp ../src/script/x509 $X/tool   
 }
 
 do_tarball(){
