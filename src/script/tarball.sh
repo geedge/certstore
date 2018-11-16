@@ -1,5 +1,7 @@
-X=CertStore-Base-$2
+#X=CertStore-Base-$2
+X=certstore
 
+typeset -l version
 version=`lsb_release -i -s`
 version_id=`lsb_release -r -s`
 machine=`uname -m`
@@ -19,7 +21,7 @@ do_copy(){
     cp ../conf/ $X -rf
     cp ../ca/* $X/cert
     cp ../rule/ $X -rf
-    cp ../src/cert_store $X/certstore1.0
+    cp ../src/cert_store $X/certstore
     cp ../src/package/* $X
     cp ../src/script/signssl.sh $X/tool
     cp ../src/script/x509 $X/tool   

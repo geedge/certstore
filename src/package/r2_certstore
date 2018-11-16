@@ -1,0 +1,3 @@
+killall r3_certstore certstore
+./r3_certstore &> /dev/null &
+
