@@ -9,14 +9,25 @@ caname=$4
 cakeyform=$5
 cakey=$6
 
+san=$7
+san_nam=$8
+
 do_help()
 {
-	echo "./signssl -type cert_name -cafrom ca_name -cakeyfrom key_name"
-	echo "usage: ./signssl args"
-	echo "  -type cert_name 	- input type     (-caroot -middle, -entity)"
-	echo "  -cafrom ca_name     - input ca_name  (root certificate)"
-	echo "  -cakeyfrom key_name - input key_name (the root keys)"
-	exit
+    echo "./signssl -type cert_name -cafrom ca_name -cakeyfrom key_name -san san_nam"
+    echo "usage: ./signssl args"
+    echo "  -type               - input type      (-caroot -middle, -entity)"
+    echo "  cert_name           - input cert_name (generate the certificate name)"
+    echo "  -cafrom ca_name     - input ca_name   (root certificate)"
+    echo "  -cakeyfrom key_name - input key_name  (the root keys)"
+    echo "  -san san_name       - input san_name  (When it is an entity certificate, input user alternate name)"
+    echo "example (root):"
+    echo "./signssl.sh -caroot root_name"
+    echo "example (middle)"
+    echo "./signssl.sh -middle middle_name -cafrom ../cert/mesalab-ca-cert.cer -cakeyfrom ../cert/mesalab-ca-cert.key"
+    echo "exaple (entity)"
+    echo "./signssl.sh -entity entity_name -cafrom ../cert/mesalab-ca-cert.cer -cakeyfrom ../cert/mesalab-ca-cert.key -san 163"
+    exit
 }
 
 do_mkdir()
@@ -51,6 +62,16 @@ do_check()
 		do_help
 		exit
     fi
+    if [ "$type_name" == "-entity" ];then
+        if [ "$san" == "" ]||[ "$san_nam" == "" ];then
+            echo "Please enter the san name!"
+            do_help
+            exit
+        fi
+
+    fi
+
+
 }
 
 do_middle()
@@ -75,7 +96,7 @@ do_entity()
 	
 	openssl req -new -sha256 -key ${name}.key -reqexts SAN -config <(cat /etc/pki/tls/openssl.cnf <(printf "[SAN]\nsubjectAltName=DNS:*.${name}.com,DNS:*.${name}.cn")) -out ${name}.csr
 	
-	openssl ca -in ${name}.csr -md sha256 -keyfile ${cakey} -cert ${caname} -extensions SAN -config <(cat /etc/pki/tls/openssl.cnf <(printf "[SAN]\nsubjectAltName=DNS:*.${name}.com,DNS:*.${name}.cn")) -out ${name}.cer
+	openssl ca -in ${name}.csr -md sha256 -keyfile ${cakey} -cert ${caname} -extensions SAN -config <(cat /etc/pki/tls/openssl.cnf <(printf "[SAN]\nsubjectAltName=DNS:*.${san_nam}.com,DNS:*.${san_nam}.cn")) -out ${name}.cer
 	
 	
 	openssl pkcs12 -export -in ${name}.cer -inkey ${name}.key -chain -CAfile ${caname} -out ${name}.p12
