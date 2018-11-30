@@ -435,14 +435,18 @@ x509_get_alt_name(X509 *x509, char *extraname)
     }
 
     GENERAL_NAMES* subjectAltNames = (GENERAL_NAMES*)X509_get_ext_d2i(x509, NID_subject_alt_name, NULL, NULL);
-    int cnt = sk_GENERAL_NAME_num(subjectAltNames);
+    if (subjectAltNames){
+        int cnt = sk_GENERAL_NAME_num(subjectAltNames);
 
-    for (i = 0; i < cnt; i++) {
-        GENERAL_NAME* generalName = sk_GENERAL_NAME_value(subjectAltNames, i);
-        xret = x509_alt_name_cmp(ASN1_STRING_data(GENERAL_NAME_get0_value(generalName, NULL)), extraname);
-        if (xret == 0)
+        for (i = 0; i < cnt; i++) {
+            GENERAL_NAME* generalName = sk_GENERAL_NAME_value(subjectAltNames, i);
+            xret = x509_alt_name_cmp(ASN1_STRING_data(GENERAL_NAME_get0_value(generalName, NULL)), extraname);
+            if (xret == 0)
             break;
+        }
     }
+    if (subjectAltNames)
+        GENERAL_NAMES_free(subjectAltNames);
 finish:
     return xret;
 }
@@ -547,6 +551,7 @@ x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
 	    !X509_set_pubkey(crt, key))
 		goto errout;
 
+    EVP_PKEY_free(key);
 //extensions
 	X509V3_CTX ctx;
 	X509V3_set_ctx(&ctx, cacrt, crt, NULL, NULL, 0);
@@ -748,6 +753,7 @@ errout2:
 	sk_GENERAL_NAME_pop_free(names, GENERAL_NAME_free);
 errout:
 	X509_free(crt);
+    EVP_PKEY_free(key);
 err:
 	return NULL;
 }
@@ -1034,6 +1040,8 @@ modify:
     x509_get_msg_from_ca(x509, sign);
     x509_get_msg_from_ca(_root, root);
 
+    if (request->origin)
+        X509_free(request->origin);
     X509_free(x509);
 finish:
     return _expire;
@@ -1239,6 +1247,8 @@ redis_clnt_send(struct request_t *request, redisReply *reply)
     evhttp_socket_send(request->evh_req, reply->str);
 
 finish:
+    if (request->origin)
+        X509_free(request->origin);
     kfree(request);
     return xret;
 }
@@ -1265,7 +1275,6 @@ void redis_get_callback(redisAsyncContext *c, void *r, void *privdata)
         default:
             break;
     }
-
     return;
 }
 
@@ -1463,6 +1472,7 @@ evhttp_socket_close_cb(struct evhttp_connection *evcon,
     if (NULL == evcon){
         goto finish;
     }
+
 finish:
     return;
 }
@@ -1732,7 +1742,7 @@ redis_link_detection(uint32_t __attribute__((__unused__)) uid,
         if(info->cl_ctx->err != 0){
             if (info->sync)
                 redisFree(info->sync);
-
+            
             xret = redis_sync_init(&info->sync);
             if (xret < 0 || !info->sync){
                 mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect sync redis failed", tid);
