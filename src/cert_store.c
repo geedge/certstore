@@ -19,7 +19,7 @@
 #include "MESA_prof_load.h"
 
 /* GIT Release */
-#define CERT_GIT_RELEASE "1.1.0"
+#define CERT_GIT_RELEASE "1.1"
 
 #define MODE_TYPE(x) run_mode & x
 
@@ -28,6 +28,12 @@
 #define CERT_BASIC_CFG "/home/ceiec/certstore_run/conf/cert_store.ini"
 #else
 #define CERT_BASIC_CFG "./conf/cert_store.ini"
+#endif
+
+#ifdef VERSION_TARGET
+char *git_ver = VERSION_TARGET;
+#else
+char *git_ver = "0"
 #endif
 
 static char* cert_revision() { return (CERT_GIT_RELEASE); }
@@ -42,7 +48,7 @@ static int run_mode;
 
 static void help()
 {
-  printf("Welcome to CertStore %s\n", cert_revision());
+  printf("Welcome to certstore %s.%s\n", cert_revision(), VERSION_TARGET);
   printf("cert_store <--normal|--daemon>\n"
          "Usage:\n"
          "  --normal     | Run the program in normal mode\n"

@@ -8,6 +8,7 @@ BUILD=$(shell git log | grep -cE 'Author:.*<.*@.*>')
 BUILDSHA=$(shell git rev-parse --short HEAD)
 BUILD_FINGERPRINT=$(MAJOR).$(BUILD).$(BUILDSHA)
 
+VERSION_TARGET:=$(BUILDSHA)
 # Default simulation parameters
 NUM_PROCESSORS=1
 
@@ -64,6 +65,8 @@ CFLAGS_LOCAL = -std=gnu99 -g -O3 -W -Wall \
                -I./inc \
 
 DEPS   :=  $(objs:.o=.d)
+ 
+CFLAGS_GLOBAL += -DVERSION_TARGET=\"$(VERSION_TARGET)\"
 
 CLEAN_LIST  :=  $(CLEAN_LIST) $(OBJS) $(DEPS) $(TARGET_LIB) $(OBJ_DIR)
 
