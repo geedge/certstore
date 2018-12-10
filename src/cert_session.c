@@ -1202,10 +1202,8 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
             chain[i] = root;
             i++;
         }
-        chain[i] = sign;
     }else{
         chain[0] = root;
-        chain[1] = sign;
     }
     web_json_table_add(pkey, sign, chain, &request->odata);
 

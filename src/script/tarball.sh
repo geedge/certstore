@@ -1,5 +1,5 @@
-#X=CertStore-Base-$2
-X=certstore
+X=certstore-base
+#X=certstore
 
 typeset -l version
 version=`lsb_release -i -s`
