@@ -21,7 +21,8 @@
 struct config_bucket_t certConfig = {
     .thread_nu = 1,
     .expire_after = 30,
-    .def_path  = "/home/test",
+    .ca_path  = "./cert/mesalab-ca.pem",
+    .uninsec_path = "./cert/mesalab-ca-untrust.pem",
     .addr_t = {9995, 6379, "0.0.0.0", 0, 6379, "0.0.0.0"},
     .keyring = {0, 0, NULL, NULL},
 };
@@ -47,11 +48,19 @@ static int load_system_config(char *config)
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the number of valid time failed");
     }
 
-    xret = MESA_load_profile_string_nodef(config, "CONFIG", "def-ca-path", rte->def_path, 128);
-    if (xret < 0 && !rt_dir_exsit(rte->def_path)){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the def path failed or the (%s) does not exist",
-                         rte->def_path);
+    xret = MESA_load_profile_string_nodef(config, "CONFIG", "ca_path", rte->ca_path, 128);
+    if (xret <0 && rt_file_exsit(rte->ca_path)){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the ca path failed or the (%s) does not exist",
+                         rte->ca_path);
         goto finish;
+
+    }
+    xret = MESA_load_profile_string_nodef(config, "CONFIG", "untrusted_ca_path", rte->uninsec_path, 128);
+    if (xret <0 && rt_file_exsit(rte->uninsec_path)){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the untrusted ca path failed or the (%s) does not exist",
+                             rte->ca_path);
+        goto finish;
+
     }
 finish:
     return xret;

@@ -93,7 +93,8 @@ void cert_preview ()
     printf("%30s:%45d\n", "Maat Redis Port", rte->addr_t.maat_port);
     printf("%30s:%45d\n", "Maat Redis index", rte->addr_t.dbindex);
     printf("%30s:%45d\n", "Libevent Port", rte->addr_t.e_port);
-    printf("%30s:%45s\n", "Def Cert Path", rte->def_path);
+    printf("%30s:%45s\n", "Cert Path", rte->ca_path);
+    printf("%30s:%45s\n", "Uninsec cert Path", rte->uninsec_path);
     printf("%30s:%45s\n", "Log Directory", logging_sc_lid.run_log_path);
     printf("%30s:%45s\n", "Table Info", rte->maat_t.info_path);
     if (rte->maat_t.maat_json_switch == 1){

@@ -72,7 +72,8 @@ struct ntc_maat_t{
 struct config_bucket_t{
     unsigned int thread_nu;
 	unsigned int expire_after;
-    char def_path[128];
+    char ca_path[128];
+    char uninsec_path[128];
     struct ntc_maat_t maat_t;
     struct _initer_addr_t addr_t;
     struct key_ring_list keyring;

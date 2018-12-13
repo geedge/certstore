@@ -55,9 +55,6 @@
 #define LOCAL_USER_DER     2
 #define LOCAL_USER_P12     3
 
-#define DEFAULT_PRIVATEKEY_NAME  "mesalab-ca-cert.key"
-#define DEFAULT_CA_CERTIFICATE   "mesalab-ca-cert.cer"
-
 #define MESALAB_INSEC_CERT       "mesalab-insec-cert.cer"
 #define MESALAB_INSEC_KEY        "mesalab-insec-cert.key"
 
@@ -1293,8 +1290,7 @@ finish:
     return 0;
 }
 
-int x509_privatekey_init(char *private_file, char *public_file,
-                         EVP_PKEY **key, X509 **root)
+int x509_privatekey_init(char *ca_file, EVP_PKEY **key, X509 **root)
 {
     int xret = -1;
 	FILE *fp; RSA *rsa = NULL;
@@ -1309,9 +1305,9 @@ int x509_privatekey_init(char *private_file, char *public_file,
         goto pkey_free;
     }
 
-    fp = fopen(private_file, "r");
+    fp = fopen(ca_file, "r");
     if (NULL == fp){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", private_file);
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", ca_file);
         RSA_free(rsa);
         goto pkey_free;
     }
@@ -1323,9 +1319,9 @@ int x509_privatekey_init(char *private_file, char *public_file,
     fclose(fp);
 
     BIO *in;
-    in = BIO_new_file(public_file, "r");
+    in = BIO_new_file(ca_file, "r");
     if (!in){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", public_file);
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to open file(%s)", ca_file);
         goto pkey_free;
     }
 
@@ -1590,7 +1586,7 @@ static int
 task_private_init(struct event_base *base, libevent_thread *info)
 {
     int xret = -1;
-    char key_path[256] = {0}, cert_path[256] = {0};
+    struct config_bucket_t *config = cert_default_config();
 
     /* Initialize the redis connection*/
     xret = redis_rsync_init(base, &info->cl_ctx);
@@ -1604,22 +1600,14 @@ task_private_init(struct event_base *base, libevent_thread *info)
     }
 
     /* Initialize the X509 CA*/
-    snprintf(key_path, sizeof(key_path), "%s/%s",   cert_default_config()->def_path, DEFAULT_PRIVATEKEY_NAME);
-    snprintf(cert_path, sizeof(cert_path), "%s/%s", cert_default_config()->def_path, DEFAULT_CA_CERTIFICATE);
-
-    xret = x509_privatekey_init(key_path, cert_path, &info->def.key, &info->def.root);
+    xret = x509_privatekey_init(config->ca_path, &info->def.key, &info->def.root);
     if (xret < 0 || !(info->def.key) || !(info->def.root)){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the x509 certificate");
         goto finish;
     }
 
     /* Initialize the insec CA*/
-    memset(key_path, 0, 256);
-    memset(cert_path, 0, 256);
-    snprintf(key_path, sizeof(key_path), "%s/%s",   cert_default_config()->def_path, MESALAB_INSEC_KEY);
-    snprintf(cert_path, sizeof(cert_path), "%s/%s", cert_default_config()->def_path, MESALAB_INSEC_CERT);
-
-    xret = x509_privatekey_init(key_path, cert_path, &info->def.insec_key, &info->def.insec_root);
+    xret = x509_privatekey_init(config->uninsec_path, &info->def.insec_key, &info->def.insec_root);
     if (xret < 0 || !(info->def.key) || !(info->def.root)){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the insec x509 certificate");
         goto finish;
@@ -1740,7 +1728,7 @@ redis_link_detection(uint32_t __attribute__((__unused__)) uid,
         if(info->cl_ctx->err != 0){
             if (info->sync)
                 redisFree(info->sync);
-            
+
             xret = redis_sync_init(&info->sync);
             if (xret < 0 || !info->sync){
                 mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect sync redis failed", tid);
