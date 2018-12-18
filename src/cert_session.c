@@ -1843,8 +1843,8 @@ void sigproc(int __attribute__((__unused__))sig)
             redisFree(thread->sync);
         }
         event_base_free(thread->base);
-        key_ring_list_destroy(rte->keyring.htable);
-        key_ring_list_destroy(rte->keyring.oldhtable);
+        key_ring_list_destroy(&(rte->keyring.htable));
+        key_ring_list_destroy(&(rte->keyring.oldhtable));
     }
     kfree(threads);
 
@@ -1905,7 +1905,7 @@ void Maat_read_entry_start_cb(int update_type, void* u_para)
     }
 
     if (keyring->oldhtable)
-        key_ring_list_destroy(keyring->oldhtable);
+        key_ring_list_destroy(&(keyring->oldhtable));
 
     /*Keyring list initialization **/
     keyring->oldhtable  = key_ring_list_create();
