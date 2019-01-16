@@ -755,7 +755,7 @@ err:
 	return NULL;
 }
 
-void x509_get_msg_from_ca(X509 *x509, char *root)
+void x509_get_msg_from_ca(X509 *x509, char **root)
 {
 	BIO *bp = NULL;
     int len = 0;
@@ -765,12 +765,17 @@ void x509_get_msg_from_ca(X509 *x509, char *root)
         goto finish;
     }
     PEM_write_bio_X509(bp, x509);
-    len = BIO_read(bp, root, SG_DATA_SIZE * 2);
+
+    char *p = NULL;
+    len = BIO_get_mem_data(bp, &p);
+    *root = (char*)malloc(len + 1);
+    memset(*root, 0, len + 1);
+
+    len = BIO_read(bp, *root, len);
     if(len <= 0) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Error reading signature file");
         goto err;
     }
-    root[len] ='\0';
 err:
     BIO_free(bp);
 finish:
@@ -980,7 +985,7 @@ err:
 }
 
 static int x509_online_append(struct x509_object_ctx *def, struct request_t *request,
-                               char *root, char *sign, char *pkey, STACK_OF(X509) **stack_ca)
+                               char **root, char **sign, char *pkey, STACK_OF(X509) **stack_ca)
 {
 	void *odata = NULL;
     X509* x509 = NULL;
@@ -1144,6 +1149,7 @@ static int
 web_json_table_add(char *privatekey, char *sign,
                    char **chain, char **data)
 {
+    int i = 0;
     size_t osize = 0;
     const char *jstr = NULL;
     struct json_object *outline = json_object_new_object();
@@ -1158,24 +1164,30 @@ web_json_table_add(char *privatekey, char *sign,
 
     json_object_put(outline);
 
+    kfree(sign);
+    for (i = 0; i < 6; i ++){
+        if (chain[i] != NULL)
+            kfree(chain[i]);
+    }
     return 0;
 }
 
 static int
 redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
 {
+#define MAX_CHAIN_LEN 6
     int xret = -1, i = 0;
     int expire_after;
     STACK_OF(X509) *stack_ca = NULL;
     uint64_t startTime = 0, endTime = 0;
     libevent_thread *info   = threads + request->thread_id;
-    char sign[SG_DATA_SIZE] = {0}, pkey[SG_DATA_SIZE] = {0};
-    char root[SG_DATA_SIZE] = {0};
+    char *sign = NULL, pkey[SG_DATA_SIZE] = {0};
+    char *root = NULL;
 
     startTime        = rt_time_ns();
 
-    expire_after = x509_online_append(&info->def, request, root, sign, pkey, &stack_ca);
-    if (sign[0] == '\0' && pkey[0] == '\0'){
+    expire_after = x509_online_append(&info->def, request, &root, &sign, pkey, &stack_ca);
+    if (sign == NULL && pkey[0] == '\0'){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to sign certificate");
         evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
         goto finish;
@@ -1188,20 +1200,21 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
     FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[3], FS_OP_SET, info->diffTime);
     FS_internal_operate(SGstats.handle, info->field_ids, 0, FS_OP_ADD, 1);
 
-    char _chain[6][SG_DATA_SIZE];
-    char *chain[6] = {0};
+    char *single = NULL;
+    char *chain[MAX_CHAIN_LEN] = {0};
     if (stack_ca){
         for (i = 0; i < sk_X509_num(stack_ca); i++){
-            x509_get_msg_from_ca(sk_X509_value(stack_ca, i), _chain[i]);
-            chain[i] = _chain[i];
+            x509_get_msg_from_ca(sk_X509_value(stack_ca, i), &single);
+            chain[i] = single;
         }
-        if (root[0] != '\0'){
+        if (root != NULL){
             chain[i] = root;
             i++;
         }
     }else{
         chain[0] = root;
     }
+
     web_json_table_add(pkey, sign, chain, &request->odata);
 
     if (NULL == c){
