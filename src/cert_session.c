@@ -586,8 +586,11 @@ x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
 
     if (crl != NULL && STRCMP(crl, "null")){
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Sign certificate the CRL is %s", crl);
+        /**Add URI:**/
+        char _crl[516] = {0};
+        snprintf(_crl, 516, "%s%s", "URI:", crl);
         if (ssl_x509_v3ext_add(&ctx, crt, "crlDistributionPoints",
-		                       crl) == -1) {
+		                       _crl) == -1) {
 			goto errout;
 		}
     }else{

@@ -73,7 +73,7 @@
         {
             "table_name": "PXY_OBJ_KEYRING",
             "table_content": [
-                "1\t1\tname_01\troot\t/test/01\t/test/01\t15\trsa2048\tURI:http://www.test.com\t1\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer",
+                "1\t1\tname_01\troot\t/test/01\t/test/01\t15\trsa2048\thttp://www.test.com\t1\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer",
                 "2\t1\tname_02\troot\t/test/01\t/test/01\t90\trsa2048\tnull\t1\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer",
                 "3\t1\tname_03\troot\t/test/01\t/test/01\t30\trsa2048\tnull\t1\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer",
                 "4\t1\tname_04\troot\t/test/01\t/test/01\t30\trsa2048\tnull\t1\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.key\t/home/fengweihao/workspace/cert_store/ca/mesalab-ca-cert.cer",
