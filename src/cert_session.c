@@ -23,6 +23,8 @@
 #include <engine.h>
 #include <pkcs12.h>
 
+#include <uuid/uuid.h>
+
 #include "rt_string.h"
 #include "rt_common.h"
 #include "rt_stdlib.h"
@@ -333,19 +335,18 @@ void key_ring_list_destroy(MESA_htable_handle *htable)
 }
 
 int
-ssl_rand(void *p, size_t sz)
+ssl_rand(long *r)
 {
-	int rv;
+    int i = 0;
+    uuid_t uu;
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-	rv = RAND_pseudo_bytes((unsigned char*)p, sz);
-	if (rv == 1)
-		return 0;
-#endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
-	rv = RAND_bytes((unsigned char*)p, sz);
-	if (rv == 1)
-		return 0;
-	return -1;
+    uuid_generate(uu);
+
+    for (i = 0; i < 16; i++) {
+        (*r) <<= 8;
+        (*r) |= (unsigned char)uu[i];
+    }
+    return 0;
 }
 
 int
@@ -353,15 +354,10 @@ ssl_x509_serial_copyrand(X509 *dstcrt, X509 *srccrt)
 {
 	ASN1_INTEGER *srcptr, *dstptr;
 	BIGNUM *bnserial;
-	long rand;
+	long rand = 0;
 	int rv;
 
-#ifndef PURIFY
-	rv = ssl_rand(&rand, sizeof(rand));
-#else /* PURIFY */
-	rand = 0xF001;
-	rv = 0;
-#endif /* PURIFY */
+	rv = ssl_rand(&rand);
 	dstptr = X509_get_serialNumber(dstcrt);
 	srcptr = X509_get_serialNumber(srccrt);
 	if ((rv == -1) || !dstptr || !srcptr)
@@ -593,18 +589,7 @@ x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
 		                       _crl) == -1) {
 			goto errout;
 		}
-    }else{
-        char *crlurlval = x509_get_CrlDistPoints(origcrt);
-        if (crlurlval) {
-        	if (ssl_x509_v3ext_add(&ctx, crt, "crlDistributionPoints",
-        	                       crlurlval) == -1) {
-        		free(crlurlval);
-        		goto errout;
-        	}
-        	free(crlurlval);
-        }
     }
-
     char *cfval;
 	if (x509_get_alt_name(origcrt, extraname) == 0) {
 		/* no extraname provided: copy original subjectAltName ext */
