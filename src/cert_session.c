@@ -334,45 +334,40 @@ void key_ring_list_destroy(MESA_htable_handle *htable)
     return;
 }
 
-int
-ssl_rand(long *r)
+void uuid_squeeze(char *s,int c)
 {
-    int i = 0;
-    uuid_t uu;
-
-    uuid_generate(uu);
-
-    for (i = 0; i < 16; i++) {
-        (*r) <<= 8;
-        (*r) |= (unsigned char)uu[i];
+    int i,j;
+    for (i = 0, j = 0; s[i] != '\0'; i++)
+    {
+        if (s[i] != c)
+        {
+            s[j++] = s[i];
+        }
     }
-    return 0;
+    s[j] = '\0';
 }
 
 int
-ssl_x509_serial_copyrand(X509 *dstcrt, X509 *srccrt)
+ssl_x509_set_serial(ASN1_INTEGER *ai)
 {
-	ASN1_INTEGER *srcptr, *dstptr;
-	BIGNUM *bnserial;
-	long rand = 0;
-	int rv;
+    int ret = -1;
+    uuid_t uu;
+    char buf[64] = {0};
+    BIGNUM *bignum = NULL;
 
-	rv = ssl_rand(&rand);
-	dstptr = X509_get_serialNumber(dstcrt);
-	srcptr = X509_get_serialNumber(srccrt);
-	if ((rv == -1) || !dstptr || !srcptr)
-		return -1;
-	bnserial = ASN1_INTEGER_to_BN(srcptr, NULL);
-	if (!bnserial) {
-		/* random 32-bit serial */
-		ASN1_INTEGER_set(dstptr, rand);
-	} else {
-		/* original serial plus random 32-bit offset */
-		BN_add_word(bnserial, rand);
-		BN_to_ASN1_INTEGER(bnserial, dstptr);
-		BN_free(bnserial);
-	}
-	return 0;
+    uuid_generate(uu);
+    uuid_unparse(uu, buf);
+    uuid_squeeze(buf, '-');
+
+    BN_hex2bn(&bignum, buf);
+
+    if (ai && !BN_to_ASN1_INTEGER(bignum, ai))
+        goto error;
+    ret = 1;
+error:
+    if (!bignum)
+        BN_free(bignum);
+    return ret;
 }
 
 int
@@ -538,7 +533,7 @@ x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
 	if (!X509_set_version(crt, 0x02) ||
 	    !X509_set_subject_name(crt, subject) ||
 	    !X509_set_issuer_name(crt, issuer) ||
-	    ssl_x509_serial_copyrand(crt, origcrt) == -1 ||
+	    ssl_x509_set_serial(X509_get_serialNumber(crt)) == -1 ||
 	    !X509_gmtime_adj(X509_get_notBefore(crt), (long)(sizeof_seconds(-1))) ||
 	    !X509_time_adj_ex(X509_get_notAfter(crt), days, 0, NULL) ||
 	    !X509_set_pubkey(crt, key))
@@ -972,6 +967,26 @@ err:
     return NULL;
 }
 
+char *x509_get_sn(X509 *x509)
+{
+	ASN1_INTEGER *asn1_i = NULL;
+	BIGNUM *bignum = NULL;
+	char *serial = NULL;
+
+	asn1_i = X509_get_serialNumber(x509);
+	bignum = ASN1_INTEGER_to_BN(asn1_i, NULL);
+	if (bignum == NULL)	{
+		goto finish;
+	}
+	serial = BN_bn2hex(bignum);
+    if (serial == NULL)	{
+		goto finish;
+	}
+    BN_free(bignum);
+finish:
+	return serial;
+}
+
 static int x509_online_append(struct x509_object_ctx *def, struct request_t *request,
                                char **root, char **sign, char *pkey, STACK_OF(X509) **stack_ca)
 {
@@ -1027,6 +1042,9 @@ modify:
     if (!x509){
         goto finish;
     }
+
+    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate serial number is %s", x509_get_sn(x509));
+
     x509_get_msg_from_ca(x509, sign);
     x509_get_msg_from_ca(_root, root);
 
