@@ -1920,6 +1920,13 @@ void Maat_read_entry_start_cb(int update_type, void* u_para)
 
     if (update_type != CM_UPDATE_TYPE_FULL){
         keyring->updata_type = 2;
+        if (!keyring->oldhtable){
+            keyring->oldhtable  = key_ring_list_create();
+            keyring->sum_cnt = 0;
+            keyring->updata_type = 1;
+            mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The initial key ring list was successful, addr is %p",
+                            keyring->oldhtable);
+        }
         goto finish;
     }
 
