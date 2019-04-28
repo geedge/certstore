@@ -180,7 +180,7 @@ err:
 
 static X509* base_load_pkcs12(BIO *in, EVP_PKEY **pkey, X509 **x, STACK_OF(X509) **ca)
 {
-    PKCS12 *p12;
+    PKCS12 *p12 = NULL;
     const char *pass = "";
 
     X509 *_x = NULL;
@@ -365,7 +365,7 @@ ssl_x509_set_serial(ASN1_INTEGER *ai)
         goto error;
     ret = 1;
 error:
-    if (!bignum)
+    if (bignum)
         BN_free(bignum);
     return ret;
 }
@@ -465,7 +465,7 @@ int add_ext(X509 *cacrt, X509 *cert, int nid, char *value)
     return 1;
 }
 
-static char*
+static __attribute__((__unused__)) char*
 x509_get_CrlDistPoints(X509 *x509)
 {
     int i = 0, crit = 0;
@@ -987,13 +987,73 @@ finish:
 	return serial;
 }
 
+static int check(X509_STORE *ctx, X509 *x,
+                 STACK_OF(X509) *uchain, STACK_OF(X509) *tchain,
+                 STACK_OF(X509_CRL) *crls, ENGINE __attribute__((__unused__))*e)
+{
+    int i = 0, ret = 0;
+    X509_STORE_CTX *csc;
+
+    csc = X509_STORE_CTX_new();
+    if (csc == NULL) {
+        goto end;
+    }
+    X509_STORE_set_flags(ctx, 0);
+    if (!X509_STORE_CTX_init(csc, ctx, x, uchain)) {
+        goto end;
+    }
+    if (tchain)
+        X509_STORE_CTX_trusted_stack(csc, tchain);
+    if (crls)
+        X509_STORE_CTX_set0_crls(csc, crls);
+    i = X509_verify_cert(csc);
+    X509_STORE_CTX_free(csc);
+
+    ret = 0;
+ end:
+    if (i > 0) {
+        ret = 1;
+    }
+    return (ret);
+}
+
+static int
+x509_check_chain(STACK_OF(X509) *stack_ca, X509 *ca, X509 *x)
+{
+    int i = 0, xret = 0;
+    X509_LOOKUP *lookup = NULL;
+    X509_STORE *cert_ctx = NULL;
+
+    cert_ctx = X509_STORE_new();
+    if (cert_ctx == NULL){
+        goto end;
+    }
+    X509_STORE_set_verify_cb(cert_ctx, NULL);
+
+    lookup = X509_STORE_add_lookup(cert_ctx, X509_LOOKUP_file());
+    if (stack_ca != NULL){
+        for (i = 0; i < sk_X509_num(stack_ca); i++){
+            X509_STORE_add_cert(lookup->store_ctx, sk_X509_value(stack_ca, i));
+        }
+    }
+    X509_STORE_add_cert(lookup->store_ctx, ca);
+    xret = check(cert_ctx, x, NULL, NULL, NULL, NULL);
+end:
+    if (cert_ctx != NULL)
+        X509_STORE_free(cert_ctx);
+
+    return xret;
+}
+
 static int x509_online_append(struct x509_object_ctx *def, struct request_t *request,
-                               char **root, char **sign, char *pkey, STACK_OF(X509) **stack_ca)
+                              char **root, char **sign, char *pkey,
+                              STACK_OF(X509) **stack_ca, int *verify)
 {
 	void *odata = NULL;
     X509* x509 = NULL;
     int is_valid = request->is_valid;
     int _expire = 0; char *_crl = NULL;
+    char *serial = NULL;
     X509 *_root = NULL; EVP_PKEY *_key = NULL;
 
     struct key_ring_list *keyring = &cert_default_config()->keyring;
@@ -1043,8 +1103,14 @@ modify:
         goto finish;
     }
 
-    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate serial number is %s", x509_get_sn(x509));
+    serial = x509_get_sn(x509);
+    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate serial number is %s", serial);
+    OPENSSL_free(serial);
 
+    *verify = x509_check_chain(*stack_ca, _root, x509);
+    if (*verify != 1){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Certificate chain match failed");
+    }
     x509_get_msg_from_ca(x509, sign);
     x509_get_msg_from_ca(_root, root);
 
@@ -1183,7 +1249,7 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
 {
 #define MAX_CHAIN_LEN 6
     int xret = -1, i = 0;
-    int expire_after;
+    int expire_after, verify = 0;
     STACK_OF(X509) *stack_ca = NULL;
     uint64_t startTime = 0, endTime = 0;
     libevent_thread *info   = threads + request->thread_id;
@@ -1192,7 +1258,7 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
 
     startTime        = rt_time_ns();
 
-    expire_after = x509_online_append(&info->def, request, &root, &sign, pkey, &stack_ca);
+    expire_after = x509_online_append(&info->def, request, &root, &sign, pkey, &stack_ca, &verify);
     if (sign == NULL && pkey[0] == '\0'){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to sign certificate");
         evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
@@ -1223,7 +1289,7 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
 
     web_json_table_add(pkey, sign, chain, &request->odata);
 
-    if (NULL == c){
+    if ((NULL == c) || (verify == 0)){
         struct evhttp_request *evh_req = request->evh_req;
         FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[2], FS_OP_ADD, 1);
         evhttp_socket_send(evh_req, request->odata);
@@ -1467,7 +1533,7 @@ thread_decode_uri(const char *uri, X509 **origin,
 
     _origin = decode_origin_cert(uri, "origin_cert");
     if (_origin)
-        *origin = x509_get_ca_from_msg(_origin, STRLEN(_origin));
+        *origin = x509_get_ca_from_msg(_origin, STRLEN(_origin) + 1);
 
     evhttp_clear_headers(&params);
     free(decoded_uri);
