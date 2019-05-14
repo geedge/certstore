@@ -34,6 +34,7 @@ struct pxy_obj_keyring{
 	int service;
     EVP_PKEY *key;
     X509 *root;
+    char digest[EVP_MAX_MD_SIZE];
 	char name[128];
 	char type[128];
 	char ctl[512];

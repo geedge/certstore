@@ -1559,6 +1559,7 @@ finish:
 static int
 x509_get_rkey(X509 *origin, int keyring_id, char *rkey)
 {
+	void *odata = NULL;
     unsigned int len = 0, i = 0;
     char hex[EVP_MAX_MD_SIZE] = {0};
     unsigned char fdig[EVP_MAX_MD_SIZE] = {0};
@@ -1567,7 +1568,18 @@ x509_get_rkey(X509 *origin, int keyring_id, char *rkey)
     for (i = 0; i < len ; ++i){
         sprintf(hex + i * sizeof(unsigned char) * 2, "%02x", fdig[i]);
     }
+    struct key_ring_list *keyring = &cert_default_config()->keyring;
+    if (keyring->htable != NULL){
+        odata = MESA_htable_search(keyring->htable, (const uchar *)&(keyring_id), sizeof(int));
+        if (odata){
+            struct pxy_obj_keyring *pxy_obj = (struct pxy_obj_keyring *)odata;
+
+            snprintf(rkey, DATALEN, "%d:%s:%s", keyring_id, hex, pxy_obj->digest);
+            goto finish;
+        }
+    }
     snprintf(rkey, DATALEN, "%d:%s", keyring_id, hex);
+finish:
     return 0;
 }
 
@@ -2010,6 +2022,19 @@ finish:
 }
 
 static void
+x509_get_fingerprint(X509 *x509, char *digest)
+{
+    unsigned int len = 0, i = 0;
+    unsigned char fdig[EVP_MAX_MD_SIZE] = {0};
+
+    X509_digest(x509, EVP_sha1(), fdig, &len);
+    for (i = 0; i < len ; ++i){
+        sprintf(digest + i * sizeof(unsigned char) * 2, "%02x", fdig[i]);
+    }
+    return;
+}
+
+static void
 Maat_read_entry_cb(int __attribute__((__unused__))table_id, const char* table_line,
                    void *u_para)
 {
@@ -2048,7 +2073,7 @@ Maat_read_entry_cb(int __attribute__((__unused__))table_id, const char* table_li
         }
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "initialize the x509 certificate, the keyring id is %d",
                              pxy_obj->id);
-
+        x509_get_fingerprint(pxy_obj->root, pxy_obj->digest);
         MESA_htable_add(htable, (const uchar *)(&(pxy_obj->id)), sizeof(int), pxy_obj);
         keyring->sum_cnt++;
     }else{
