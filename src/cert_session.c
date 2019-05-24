@@ -57,9 +57,6 @@
 #define LOCAL_USER_DER     2
 #define LOCAL_USER_P12     3
 
-#define MESALAB_INSEC_CERT       "mesalab-insec-cert.cer"
-#define MESALAB_INSEC_KEY        "mesalab-insec-cert.key"
-
 #define	CM_UPDATE_TYPE_FULL	1
 #define	CM_UPDATE_TYPE_INC	2
 
@@ -91,41 +88,6 @@ void disconnectCallback(const struct redisAsyncContext *c, int status) {
         return;
     }
     mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Redis server disconnected...");
-}
-
-static int
-MESA_internal_htable_set_opt(MESA_htable_handle table, enum MESA_htable_opt opt_type, unsigned value)
-{
-	int ret = MESA_htable_set_opt(table, opt_type, &value, (int)(sizeof(value)));
-	return ret;
-}
-
-static MESA_htable_handle
-key_ring_list_create()
-{
-    int ret = 0;
-    MESA_htable_handle *htable = NULL;
-
-    htable = MESA_htable_born();
-    assert(htable != NULL);
-
-    MESA_internal_htable_set_opt(htable, MHO_SCREEN_PRINT_CTRL, 0);
-    MESA_internal_htable_set_opt(htable, MHO_THREAD_SAFE, 1);
-
-    MESA_internal_htable_set_opt(htable, MHO_MUTEX_NUM, 16);
-    MESA_internal_htable_set_opt(htable, MHO_HASH_SLOT_SIZE, 1024);
-    MESA_internal_htable_set_opt(htable, MHO_HASH_MAX_ELEMENT_NUM, 2048);
-    MESA_internal_htable_set_opt(htable, MHO_EXPIRE_TIME, 0);
-
-    MESA_internal_htable_set_opt(htable, MHO_ELIMIMINATE_TYPE,
-                                 HASH_ELIMINATE_ALGO_LRU);
-    ret = MESA_htable_mature(htable);
-    if(ret != 0){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "MESA htable mature running error!");
-        goto finish;
-    }
-finish:
-    return htable;
 }
 
 void x509_get_private_key(EVP_PKEY *pkey, char *pubkey)
@@ -1045,57 +1007,85 @@ end:
     return xret;
 }
 
+static struct pxy_obj_keyring* get_obj_for_id(int keyring_id)
+{
+#define KEY_LEN 16
+	struct pxy_obj_keyring *pxy_obj=NULL;
+
+    struct config_bucket_t *rte = cert_default_config();
+
+	char cfg_id_str[KEY_LEN] = {0};
+	snprintf(cfg_id_str, KEY_LEN, "%d", keyring_id);
+
+	int tables_id = rte->table_id;
+	pxy_obj = (struct pxy_obj_keyring*)maat_plugin_get_EX_data(rte->feather, tables_id, (const char*)cfg_id_str);
+	if(pxy_obj==NULL)
+	{
+		goto finish;
+	}
+finish:
+	return pxy_obj;
+}
+
 static int x509_online_append(struct x509_object_ctx *def, struct request_t *request,
                               char **root, char **sign, char *pkey,
                               STACK_OF(X509) **stack_ca, int *verify)
 {
-	void *odata = NULL;
     X509* x509 = NULL;
     int is_valid = request->is_valid;
+    int keyring_id = request->keyring_id;
     int _expire = 0; char *_crl = NULL;
     char *serial = NULL;
     X509 *_root = NULL; EVP_PKEY *_key = NULL;
 
-    struct key_ring_list *keyring = &cert_default_config()->keyring;
-    if (keyring->htable == NULL){
-         _root = (is_valid == 1) ? def->root : def->insec_root;
-        _key  = (is_valid == 1) ? def->key  : def->insec_key;
-        _expire = cert_default_config()->expire_after;
-        mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "The approval certificate chain is empty");
-        goto modify;
-    }
+    struct config_bucket_t *rte = cert_default_config();
 
-    odata = MESA_htable_search(keyring->htable, (const uchar *)&(request->keyring_id), sizeof(int));
-    if ( !odata ){
-        _root = (is_valid == 1) ? def->root : def->insec_root;
-        _key  = (is_valid == 1) ? def->key  : def->insec_key;
-        _expire = cert_default_config()->expire_after;
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Sing certificates using local default certificates");
-    } else {
-        struct pxy_obj_keyring *pxy_obj = (struct pxy_obj_keyring *)odata;
-        if (pxy_obj->is_valid != 1){
-            pxy_obj->root = def->root;
-            pxy_obj->key  = def->key;
-        }else{
-            if (!STRCMP(pxy_obj->type, "end-entity")){
-                mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate(%d) type is an entity certificate",
-                                 pxy_obj->id);
-                *stack_ca = pxy_obj->stack_ca;
-                x509_get_msg_from_ca(pxy_obj->root, sign);
-                x509_get_private_key(pxy_obj->key, pkey);
-                goto finish;
+    if (is_valid == 0 && keyring_id != 0) keyring_id = 0;
+    if (is_valid == 1 && keyring_id == 0) keyring_id = 1;
+
+    struct pxy_obj_keyring *pxy_obj = get_obj_for_id(keyring_id);
+    if (NULL == pxy_obj)
+    {
+        if (!rte->local_debug)
+        {
+            if (1==is_valid)
+            {
+                pxy_obj = get_obj_for_id(1);
             }
-            if (!STRCMP(pxy_obj->type, "intermediate")){
-                mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate(%d) type is intermediate, chain address %p",
-                                pxy_obj->id, pxy_obj->stack_ca);
-                *stack_ca = pxy_obj->stack_ca;
+            if (0==is_valid)
+            {
+                pxy_obj = get_obj_for_id(0);
             }
+            mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Certificate issued by table id %d", keyring_id);
         }
-        _root = (is_valid == 1) ? pxy_obj->root : def->insec_root;
-        _key  = (is_valid == 1) ? pxy_obj->key  : def->insec_key;
-        _expire = pxy_obj->expire_after;
-        _crl    = pxy_obj->ctl;
+        else
+        {
+            _root = (is_valid == 1) ? def->root : def->insec_root;
+            _key  = (is_valid == 1) ? def->key  : def->insec_key;
+            _expire = cert_default_config()->expire_after;
+            mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Certificate issued by local cert");
+            goto modify;
+        }
     }
+    if (!STRCMP(pxy_obj->keyring_type, "end-entity"))
+    {
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate(%d) type is an entity certificate",
+                         keyring_id);
+        *stack_ca = pxy_obj->stack_ca;
+        x509_get_msg_from_ca(pxy_obj->root, sign);
+        x509_get_private_key(pxy_obj->key, pkey);
+        goto finish;
+    }
+    if (!STRCMP(pxy_obj->keyring_type, "intermediate"))
+    {
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate(%d) type is intermediate, chain address %p",
+                         keyring_id, pxy_obj->stack_ca);
+        *stack_ca = pxy_obj->stack_ca;
+    }
+    _root = pxy_obj->root;
+    _key  = pxy_obj->key;
+    _expire = pxy_obj->expire_after;
+    _crl    = pxy_obj->v3_ctl;
 modify:
     x509 = x509_modify_by_cert(_root, _key, request->origin, pkey,
                                      _expire, request->sni, _crl);
@@ -1108,7 +1098,8 @@ modify:
     OPENSSL_free(serial);
 
     *verify = x509_check_chain(*stack_ca, _root, x509);
-    if (*verify != 1){
+    if (*verify != 1)
+    {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Certificate chain match failed");
     }
     x509_get_msg_from_ca(x509, sign);
@@ -1557,9 +1548,8 @@ finish:
 }
 
 static int
-x509_get_rkey(X509 *origin, int keyring_id, char *rkey)
+x509_get_rkey(X509 *origin, int keyring_id, char *rkey, int is_valid)
 {
-	void *odata = NULL;
     unsigned int len = 0, i = 0;
     char hex[EVP_MAX_MD_SIZE] = {0};
     unsigned char fdig[EVP_MAX_MD_SIZE] = {0};
@@ -1568,17 +1558,17 @@ x509_get_rkey(X509 *origin, int keyring_id, char *rkey)
     for (i = 0; i < len ; ++i){
         sprintf(hex + i * sizeof(unsigned char) * 2, "%02x", fdig[i]);
     }
-    struct key_ring_list *keyring = &cert_default_config()->keyring;
-    if (keyring->htable != NULL){
-        odata = MESA_htable_search(keyring->htable, (const uchar *)&(keyring_id), sizeof(int));
-        if (odata){
-            struct pxy_obj_keyring *pxy_obj = (struct pxy_obj_keyring *)odata;
+    /** keyrind_id is 0, sign x509 by default */
+    /** 0 uninsec, 1 insec*/
+    if (is_valid && keyring_id == 0) keyring_id = 1;
 
-            snprintf(rkey, DATALEN, "%d:%s:%s", keyring_id, hex, pxy_obj->digest);
-            goto finish;
-        }
+    struct pxy_obj_keyring *pxy_obj = get_obj_for_id(keyring_id);
+    if (pxy_obj != NULL)
+    {
+        snprintf(rkey, DATALEN, "%d:%s:%s:%d", keyring_id, hex, pxy_obj->finger, is_valid);
+        goto finish;
     }
-    snprintf(rkey, DATALEN, "%d:%s", keyring_id, hex);
+    snprintf(rkey, DATALEN, "%d:%s:%d", keyring_id, hex, is_valid);
 finish:
     return 0;
 }
@@ -1629,14 +1619,14 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
         goto error;
     }
 
-    x509_get_rkey(request->origin, request->keyring_id, request->rkey);
+    x509_get_rkey(request->origin, request->keyring_id, request->rkey, request->is_valid);
     if (request->rkey[0] == '\0'){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Get the redis key from the certificate failed");
         goto error;
     }
     mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Redis key is %s", request->rkey);
 
-    if (info->cl_ctx->err != 0 || request->is_valid == 0){
+    if (info->cl_ctx->err != 0){
         xret = redis_clnt_pdu_send(request, NULL);
         if (xret < 0)
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Local sign certificate failed");
@@ -1696,20 +1686,22 @@ task_private_init(struct event_base *base, libevent_thread *info)
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Initialize the sync redis connection is failure");
     }
 
-    /* Initialize the X509 CA*/
-    xret = x509_privatekey_init(config->ca_path, &info->def.key, &info->def.root);
-    if (xret < 0 || !(info->def.key) || !(info->def.root)){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the x509 certificate");
-        goto finish;
-    }
+    if (config->local_debug)
+    {
+        /* Initialize the X509 CA*/
+        xret = x509_privatekey_init(config->ca_path, &info->def.key, &info->def.root);
+        if (xret < 0 || !(info->def.key) || !(info->def.root)){
+            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the x509 certificate");
+            goto finish;
+        }
 
-    /* Initialize the insec CA*/
-    xret = x509_privatekey_init(config->uninsec_path, &info->def.insec_key, &info->def.insec_root);
-    if (xret < 0 || !(info->def.key) || !(info->def.root)){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the insec x509 certificate");
-        goto finish;
+        /* Initialize the insec CA*/
+        xret = x509_privatekey_init(config->uninsec_path, &info->def.insec_key, &info->def.insec_root);
+        if (xret < 0 || !(info->def.key) || !(info->def.root)){
+            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the insec x509 certificate");
+            goto finish;
+        }
     }
-
 finish:
     return xret;
 }
@@ -1940,8 +1932,6 @@ void sigproc(int __attribute__((__unused__))sig)
             redisFree(thread->sync);
         }
         event_base_free(thread->base);
-        key_ring_list_destroy(&(rte->keyring.htable));
-        key_ring_list_destroy(&(rte->keyring.oldhtable));
     }
     kfree(threads);
 
@@ -1992,135 +1982,109 @@ static int mesa_fiel_stat_init()
     return 0;
 }
 
-void Maat_read_entry_start_cb(int update_type, void* u_para)
-{
-    struct key_ring_list *keyring = (struct key_ring_list *)u_para;
-
-    if (update_type != CM_UPDATE_TYPE_FULL){
-        keyring->updata_type = 2;
-        if (!keyring->oldhtable){
-            keyring->oldhtable  = key_ring_list_create();
-            keyring->sum_cnt = 0;
-            keyring->updata_type = 1;
-            mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The initial key ring list was successful, addr is %p",
-                            keyring->oldhtable);
-        }
-        goto finish;
-    }
-
-    if (keyring->oldhtable)
-        key_ring_list_destroy(&(keyring->oldhtable));
-
-    /*Keyring list initialization **/
-    keyring->oldhtable  = key_ring_list_create();
-    keyring->sum_cnt = 0;
-    keyring->updata_type = 1;
-    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The initial key ring list was successful, addr is %p",
-                     keyring->oldhtable);
-finish:
-	return;
-}
-
 static void
-x509_get_fingerprint(X509 *x509, char *digest)
+x509_get_fingerprint(X509 *x509, char *finger)
 {
+    int xret = -1;
     unsigned int len = 0, i = 0;
     unsigned char fdig[EVP_MAX_MD_SIZE] = {0};
 
-    X509_digest(x509, EVP_sha1(), fdig, &len);
+    xret = X509_digest(x509, EVP_sha1(), fdig, &len);
+    if (xret != 1)
+        goto finish;
     for (i = 0; i < len ; ++i){
-        sprintf(digest + i * sizeof(unsigned char) * 2, "%02x", fdig[i]);
+        sprintf(finger + i * sizeof(unsigned char) * 2, "%02x", fdig[i]);
     }
+finish:
     return;
 }
 
-static void
-Maat_read_entry_cb(int __attribute__((__unused__))table_id, const char* table_line,
-                   void *u_para)
+void keyring_table_new_cb(int __attribute__((__unused__))table_id, const char  __attribute__((__unused__))*key,
+const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__))argl, void __attribute__((__unused__))* argp)
 {
-    int xret = 0;
-	struct pxy_obj_keyring *pxy_obj = NULL;
-    MESA_htable_handle htable = NULL;
-    char __attribute__((__unused__))_priv_file[512] = {0};
-    char __attribute__((__unused__))_publi_file[512] = {0};
-	char private_file[512] = {0}, public_file[512] = {0};
+    char profile_name[CT_ARRARY_LEN]={0};
+    char private_file[CT_STRING_MAX] = {0}, public_file[CT_STRING_MAX]={0};
+    char __attribute__((__unused__))_priv_file[CT_PATH_MAX] = {0};
+    char __attribute__((__unused__))_publi_file[CT_PATH_MAX] = {0};
+    int service = 0, ret=0;
 
-    struct key_ring_list *keyring = (struct key_ring_list *)u_para;
+	struct pxy_obj_keyring *pxy_obj = NULL;
 
     pxy_obj = (struct pxy_obj_keyring *)malloc(sizeof(struct pxy_obj_keyring));
-    if (!pxy_obj){
+    if (!pxy_obj)
+    {
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Can not alloc, %s", strerror(errno));
         goto finish;
     }
     memset(pxy_obj, 0, sizeof(struct pxy_obj_keyring));
 
-    if (keyring->updata_type == CM_UPDATE_TYPE_FULL){
-        htable = keyring->oldhtable;
-    }else{
-        htable = keyring->htable;
+	ret=sscanf(table_line, "%d\t%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d\t%s\t%s", &pxy_obj->keyring_id, &service, profile_name,
+		       pxy_obj->keyring_type, _priv_file, _publi_file, &pxy_obj->expire_after, pxy_obj->public_algo,
+		       pxy_obj->v3_ctl, &pxy_obj->is_valid, private_file, public_file);
+	if(ret!=12)
+	{
+        kfree(&pxy_obj);
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore parse config failed: %s", table_line);
+        goto finish;
+	}
+
+    ret = x509_privatekey_init2(private_file, public_file, &pxy_obj->key, &pxy_obj->root, &pxy_obj->stack_ca);
+    if (ret < 0 || !pxy_obj->key || !pxy_obj->root){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "initialize the x509 certificate failed, the keyring id is %d",
+                         pxy_obj->keyring_id);
+        goto finish;
     }
+    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "initialize the x509 certificate, the keyring id is %d",
+                         pxy_obj->keyring_id);
+    x509_get_fingerprint(pxy_obj->root, pxy_obj->finger);
 
-	sscanf(table_line, "%d\t%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d\t%s\t%s", &pxy_obj->id, &pxy_obj->service, pxy_obj->name,
-		   pxy_obj->type, _priv_file, _publi_file, &pxy_obj->expire_after, pxy_obj->public_algo,
-		   pxy_obj->ctl, &pxy_obj->is_valid, private_file, public_file);
-
-    if (pxy_obj->is_valid){
-        xret = x509_privatekey_init2(private_file, public_file, &pxy_obj->key, &pxy_obj->root, &pxy_obj->stack_ca);
-        if (xret < 0 || !pxy_obj->key || !pxy_obj->root){
-            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the x509 certificate, the keyring id is %d",
-                             pxy_obj->id);
-            goto finish;
-        }
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "initialize the x509 certificate, the keyring id is %d",
-                             pxy_obj->id);
-        x509_get_fingerprint(pxy_obj->root, pxy_obj->digest);
-        MESA_htable_add(htable, (const uchar *)(&(pxy_obj->id)), sizeof(int), pxy_obj);
-        keyring->sum_cnt++;
-    }else{
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Unapprove keyring id is %d",
-                         pxy_obj->id);
-        MESA_htable_del(htable, (const uchar *)(&(pxy_obj->id)), sizeof(int), key_ring_free);
-    }
-
+	*ad = pxy_obj;
 finish:
 	return;
 }
 
-void Maat_read_entry_finish_cb(void* u_para)
+void keyring_table_dup_cb(int __attribute__((__unused__))table_id,	MAAT_PLUGIN_EX_DATA *to, MAAT_PLUGIN_EX_DATA *from,
+long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
 {
-    MESA_htable_handle tmphtable = NULL;
-    struct key_ring_list *keyring = (struct key_ring_list *)u_para;
-
-    if (keyring->updata_type == CM_UPDATE_TYPE_FULL){
-        tmphtable = keyring->htable;
-        keyring->htable = keyring->oldhtable;
-        keyring->oldhtable = tmphtable;
-    }
-	return;
+	struct pxy_obj_keyring* pxy_obj=(struct pxy_obj_keyring*)(*from);
+	*to=pxy_obj;
 }
 
-int sample_plugin_table(Maat_feather_t feather,const char* table_name,
-					    Maat_start_callback_t *start,Maat_update_callback_t *update,Maat_finish_callback_t *finish,
-					    void *u_para,
-					    void __attribute__((__unused__))*logger)
+void keyring_table_free_cb(int __attribute__((__unused__))table_id, MAAT_PLUGIN_EX_DATA* ad,
+long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
 {
-	int table_id = 0,ret = 0;
-	table_id = Maat_inter_table_register(feather, table_name);
-	if(table_id == -1){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Database table %s register failed.",table_name);
-	}else{
-		ret = Maat_inter_table_callback_register(feather, table_id, start,
-								                update, finish, u_para);
-		if(ret < 0){
-            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Maat callback register table %s error.",table_name);
-		}
-	}
+	struct pxy_obj_keyring* pxy_obj=(struct pxy_obj_keyring*)(*ad);
+    X509_free(pxy_obj->root);
+    EVP_PKEY_free(pxy_obj->key);
+	kfree(&pxy_obj);
+	*ad=NULL;
+}
 
-	return ret;
+int maat_table_ex_init(const char* table_name,
+					   Maat_plugin_EX_new_func_t* new_func,
+					   Maat_plugin_EX_free_func_t* free_func,
+					   Maat_plugin_EX_dup_func_t* dup_func)
+{
+	int table_id = 0;
+
+    struct config_bucket_t *rte = cert_default_config();
+
+	table_id= rte->table_id = maat_table_register(rte->feather, table_name);
+	if(table_id<0)
+	{
+		goto finish;
+	}
+	table_id=maat_plugin_EX_register(rte->feather,
+ 						             table_id,
+ 						             new_func,free_func,
+ 						             dup_func,NULL,0,NULL);
+finish:
+	return table_id;
 }
 
 int maat_feather_init()
 {
+    int ret = -1;
     Maat_feather_t feather = NULL;
 	int scan_interval_ms = 1000;
 
@@ -2129,36 +2093,44 @@ int maat_feather_init()
 
     int effective_interval_ms = maat_t->effective_interval_s * 1000;
 
-	feather = Maat_inter_feather(rte->thread_nu, maat_t->info_path, logging_sc_lid.run_log_handle);
+	feather = maat_feather(rte->thread_nu, maat_t->info_path, logging_sc_lid.run_log_handle);
 
-	Maat_inter_set_feather_opt(feather, MAAT_OPT_INSTANCE_NAME, "certstore", strlen("certstore") + 1);
+	maat_set_feather_opt(feather, MAAT_OPT_INSTANCE_NAME, "certstore", strlen("certstore") + 1);
 
     if (maat_t->maat_json_switch == 1){
-        Maat_inter_set_feather_opt(feather, MAAT_OPT_JSON_FILE_PATH, maat_t->pxy_path, strlen(maat_t->pxy_path)+1);
+        maat_set_feather_opt(feather, MAAT_OPT_JSON_FILE_PATH, maat_t->pxy_path, strlen(maat_t->pxy_path)+1);
     }
     if (maat_t->maat_json_switch == 0){
-        Maat_inter_set_feather_opt(feather, MAAT_OPT_FULL_CFG_DIR, maat_t->full_cfg_dir, strlen(maat_t->full_cfg_dir)+1);
-        Maat_inter_set_feather_opt(feather, MAAT_OPT_INC_CFG_DIR, maat_t->inc_cfg_dir, strlen(maat_t->inc_cfg_dir)+1);
+        maat_set_feather_opt(feather, MAAT_OPT_FULL_CFG_DIR, maat_t->full_cfg_dir, strlen(maat_t->full_cfg_dir)+1);
+        maat_set_feather_opt(feather, MAAT_OPT_INC_CFG_DIR, maat_t->inc_cfg_dir, strlen(maat_t->inc_cfg_dir)+1);
     }
     if (maat_t->maat_json_switch == 2){
-        Maat_inter_set_feather_opt(feather, MAAT_OPT_REDIS_IP, rte->addr_t.maat_ip, strlen(rte->addr_t.maat_ip)+1);
-        Maat_inter_set_feather_opt(feather, MAAT_OPT_REDIS_PORT, &rte->addr_t.maat_port, sizeof(rte->addr_t.maat_port));
-        Maat_inter_set_feather_opt(feather, MAAT_OPT_REDIS_INDEX, &rte->addr_t.dbindex, sizeof(rte->addr_t.dbindex));
+        maat_set_feather_opt(feather, MAAT_OPT_REDIS_IP, rte->addr_t.maat_ip, strlen(rte->addr_t.maat_ip)+1);
+        maat_set_feather_opt(feather, MAAT_OPT_REDIS_PORT, &rte->addr_t.maat_port, sizeof(rte->addr_t.maat_port));
+        maat_set_feather_opt(feather, MAAT_OPT_REDIS_INDEX, &rte->addr_t.dbindex, sizeof(rte->addr_t.dbindex));
     }
 
-    Maat_inter_set_feather_opt(feather, MAAT_OPT_SCANDIR_INTERVAL_MS,&scan_interval_ms, sizeof(scan_interval_ms));
-	Maat_inter_set_feather_opt(feather, MAAT_OPT_EFFECT_INVERVAL_MS,&effective_interval_ms, sizeof(effective_interval_ms));
+    maat_set_feather_opt(feather, MAAT_OPT_SCANDIR_INTERVAL_MS,&scan_interval_ms, sizeof(scan_interval_ms));
+	maat_set_feather_opt(feather, MAAT_OPT_EFFECT_INVERVAL_MS,&effective_interval_ms, sizeof(effective_interval_ms));
     /***/
     const char* foregin_dir="./foreign_files/";
-    Maat_inter_set_feather_opt(feather, MAAT_OPT_FOREIGN_CONT_DIR,foregin_dir, strlen(foregin_dir)+1);
-	Maat_inter_initiate_feather(feather);
+    maat_set_feather_opt(feather, MAAT_OPT_FOREIGN_CONT_DIR,foregin_dir, strlen(foregin_dir)+1);
+	ret = maat_initiate_feather(feather);
+	if (ret < 0)
+	{
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "%s MAAT init failed.", __FUNCTION__);
+	}
+    rte->feather = feather;
 
-	sample_plugin_table(feather, "PXY_OBJ_KEYRING",
-					    Maat_read_entry_start_cb,
-					    Maat_read_entry_cb,
-					    Maat_read_entry_finish_cb,
-					    &rte->keyring,
-    				    NULL);
+    int table_id = maat_table_ex_init("PXY_OBJ_KEYRING",
+                                      keyring_table_new_cb,
+        					          keyring_table_free_cb,
+        					          keyring_table_dup_cb);
+    if(table_id<0)
+    {
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore register table PXY_OBJ_KEYRING failed");
+    }
+
     return 0;
 }
 

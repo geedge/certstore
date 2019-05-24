@@ -49,22 +49,36 @@ typedef void Maat_start_callback_t(int update_type,void* u_para);
 typedef void Maat_update_callback_t(int table_id,const char* table_line,void* u_para);
 typedef void Maat_finish_callback_t(void* u_para);
 
-Maat_feather_t Maat_inter_feather(int max_thread_num,const char* table_info_path,void* logger);
+typedef void*  MAAT_PLUGIN_EX_DATA;
+typedef void Maat_plugin_EX_new_func_t(int table_id, const char* key, const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long argl, void *argp);
+typedef void Maat_plugin_EX_free_func_t(int table_id, MAAT_PLUGIN_EX_DATA* ad, long argl, void *argp);
+typedef void Maat_plugin_EX_dup_func_t(int table_id,	MAAT_PLUGIN_EX_DATA *to, MAAT_PLUGIN_EX_DATA *from, long argl, void *argp);
+typedef int Maat_plugin_EX_key2index_func_t(const char* key);
 
-int Maat_inter_set_feather_opt(Maat_feather_t feather,enum MAAT_INIT_OPT  type,const void* value,int size);
+Maat_feather_t maat_feather(int max_thread_num,const char* table_info_path,void* logger);
 
-int Maat_inter_initiate_feather(Maat_feather_t feather);
+int maat_set_feather_opt(Maat_feather_t feather,enum MAAT_INIT_OPT  type,const void* value,int size);
 
-int Maat_inter_table_register(Maat_feather_t feather,const char* table_name);
+int maat_initiate_feather(Maat_feather_t feather);
 
-int Maat_inter_table_callback_register(Maat_feather_t feather,short table_id,
+int maat_table_register(Maat_feather_t feather,const char* table_name);
+
+int maat_inter_table_callback_register(Maat_feather_t feather,short table_id,
 									Maat_start_callback_t *start,
 									Maat_update_callback_t *update,
 									Maat_finish_callback_t *finish,
 									void* u_para);
-int Maat_inter_read_state(Maat_feather_t feather, enum MAAT_STATE_OPT  type, void* value, int size);
+MAAT_PLUGIN_EX_DATA maat_plugin_get_EX_data(Maat_feather_t feather, int table_id, const char* key);
 
-void Maat_inter_burn_feather(Maat_feather_t feather);
+int maat_plugin_EX_register(Maat_feather_t feather, int table_id,
+							Maat_plugin_EX_new_func_t* new_func,
+							Maat_plugin_EX_free_func_t* free_func,
+							Maat_plugin_EX_dup_func_t* dup_func,
+							Maat_plugin_EX_key2index_func_t* key2index_func,
+							long argl, void *argp);
+int maat_read_state(Maat_feather_t feather, enum MAAT_STATE_OPT  type, void* value, int size);
+
+void matt_burn_feather(Maat_feather_t feather);
 
 #endif
 

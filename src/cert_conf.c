@@ -24,7 +24,6 @@ struct config_bucket_t certConfig = {
     .ca_path  = "./cert/mesalab-ca.pem",
     .uninsec_path = "./cert/mesalab-ca-untrust.pem",
     .addr_t = {9995, 6379, "0.0.0.0", 0, 6379, "0.0.0.0"},
-    .keyring = {0, 0, NULL, NULL},
 };
 
 struct config_bucket_t *cert_default_config()
@@ -55,6 +54,12 @@ static int load_system_config(char *config)
         goto finish;
 
     }
+
+    xret = MESA_load_profile_uint_nodef(config, "CONFIG", "local_debug", &(rte->local_debug));
+    if (xret < 0){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the number of local_debug failed");
+    }
+
     xret = MESA_load_profile_string_nodef(config, "CONFIG", "untrusted_ca_path", rte->uninsec_path, 128);
     if (xret <0 && rt_file_exsit(rte->uninsec_path)){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the untrusted ca path failed or the (%s) does not exist",

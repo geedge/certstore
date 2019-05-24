@@ -1,12 +1,12 @@
 
 /*
-*****************Maat Network Flow Rule Manage Framework********
+*****************Maat Deep Packet Inspection Policy Framework********
 *	Maat is the Goddess of truth and justice in ancient Egyptian concept.
 *	Her feather was the measure that determined whether the souls (considered 
 *	to reside in the heart) of the departed would reach the paradise of afterlife
 *	successfully.
-*	Author: zhengchao@iie.ac.cn,MESA
-*	Version 2018-09-25 foreign key and rule tags.
+*	Author: zhengchao@iie.ac.cn, MESA
+*	Version 2018-12-07 Plugin Extra Data.
 *	NOTE: MUST compile with G++
 *	All right reserved by Institute of Infomation Engineering,Chinese Academic of Science 2014~2018
 *********************************************************
@@ -16,7 +16,7 @@
 #ifndef __cplusplus
 #error("This file should be compiled with C++ compiler")
 #endif
-#include "stream.h"
+#include <MESA/stream.h>
 enum MAAT_CHARSET
 {
 	CHARSET_NONE=0,
@@ -159,14 +159,15 @@ enum MAAT_INIT_OPT
 	MAAT_OPT_ENABLE_UPDATE,			//VALUE is interger, SIZE=sizeof(int). 1: Enabled, 0:Disabled.  DEFAULT: Backgroud update is enabled. Runtime setting is allowed.
 	MAAT_OPT_ACCEPT_TAGS,			//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1. Format is a JSON, e.g.{"tags":[{"tag":"location","value":"Beijing/ChaoYang/Huayan/22A"},{"tag":"isp","value":"telecom"}]}
 	MAAT_OPT_FOREIGN_CONT_DIR,		//VALUE is a const char*, MUST end with '\0', SIZE= strlen(string+'\0')+1. Specifies a local diretory to store foreign content. Default: []table_info_path]_files
- 	MAAT_OPT_FOREIGN_CONT_LINGER		//VALUE is interger *, SIZE=sizeof(int). Greater than 0: delete after VALUE seconds; 0: delete foreign content right after the notification callbacks;  Less than 0: NEVER delete. Default: 0.
- };
+ 	MAAT_OPT_FOREIGN_CONT_LINGER	//VALUE is interger *, SIZE=sizeof(int). Greater than 0: delete after VALUE seconds; 0: delete foreign content right after the notification callbacks;  Less than 0: NEVER delete. Default: 0.
+};
 //return -1 if failed, return 0 on success;
 int Maat_set_feather_opt(Maat_feather_t feather,enum MAAT_INIT_OPT  type,const void* value,int size);
 enum MAAT_STATE_OPT
 {
-	MAAT_STATE_VERSION=1,			//Get current maat version. VALUE is long long, SIZE=sizeof(long long). 
-	MAAT_STATE_LAST_UPDATING_TABLE	//Query at Maat_finish_callback_t to determine whether this table is the last one to update. VALUE is interger, SIZE=sizeof(int), 1:yes, 0: no
+	MAAT_STATE_VERSION=1,			//Get current maat version, if maat is in update progress, the updating version is returned. VALUE is long long, SIZE=sizeof(long long). 
+	MAAT_STATE_LAST_UPDATING_TABLE,	//Query at Maat_finish_callback_t to determine whether this table is the last one to update. VALUE is interger, SIZE=sizeof(int), 1:yes, 0: no
+	MAAT_STATE_IN_UPDATING
 };
 int Maat_read_state(Maat_feather_t feather, enum MAAT_STATE_OPT  type, void* value, int size);
 
@@ -180,6 +181,7 @@ int Maat_table_callback_register(Maat_feather_t feather,short table_id,
 									Maat_update_callback_t *update,//table line ,u_para
 									Maat_finish_callback_t *finish,//u_para
 									void* u_para);
+
 
 enum MAAT_SCAN_OPT
 {
@@ -238,6 +240,46 @@ int Maat_similar_scan_string(Maat_feather_t feather,int table_id
 						,scan_status_t* mid,int thread_num);
 
 void Maat_clean_status(scan_status_t* mid);
+
+typedef void*  MAAT_RULE_EX_DATA;
+// The idx parameter is the index: this will be the same value returned by Maat_rule_get_ex_new_index() when the functions were initially registered.
+// Finally the argl and argp parameters are the values originally passed to the same corresponding parameters when Maat_rule_get_ex_new_index() was called.
+typedef void Maat_rule_EX_new_func_t(int idx, const struct Maat_rule_t* rule, const char* srv_def_large,
+											MAAT_RULE_EX_DATA* ad, long argl, void *argp);
+typedef void Maat_rule_EX_free_func_t(int idx, const struct Maat_rule_t* rule, const char* srv_def_large,
+											MAAT_RULE_EX_DATA* ad, long argl, void *argp);
+typedef void Maat_rule_EX_dup_func_t(int idx,	MAAT_RULE_EX_DATA *to, MAAT_RULE_EX_DATA *from, long argl, void *argp);
+
+int Maat_rule_get_ex_new_index(Maat_feather_t feather, const char* compile_table_name,
+										 Maat_rule_EX_new_func_t* new_func,
+										 Maat_rule_EX_free_func_t* free_func,
+										 Maat_rule_EX_dup_func_t* dup_func,
+										 long argl, void *argp);
+//returned data is duplicated by dup_func of Maat_rule_get_ex_new_index,  caller is responsible to free the data.
+MAAT_RULE_EX_DATA Maat_rule_get_ex_data(Maat_feather_t feather, const struct Maat_rule_t* rule, int idx);
+
+//Helper function for parsing space or tab seperated line.
+//Nth_column: the Nth column is numberd from 1.
+//Return 0 if success.
+int Maat_helper_read_column(const char* line, int Nth_column, size_t *column_offset, size_t *column_len);
+
+
+//Following functions are similar to Maat_rule_get_ex_data, except they are effective on plugin table.
+typedef void*  MAAT_PLUGIN_EX_DATA;
+typedef void Maat_plugin_EX_new_func_t(int table_id, const char* key, const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long argl, void *argp);
+typedef void Maat_plugin_EX_free_func_t(int table_id, MAAT_PLUGIN_EX_DATA* ad, long argl, void *argp);
+typedef void Maat_plugin_EX_dup_func_t(int table_id,	MAAT_PLUGIN_EX_DATA *to, MAAT_PLUGIN_EX_DATA *from, long argl, void *argp);
+typedef int Maat_plugin_EX_key2index_func_t(const char* key);
+
+int Maat_plugin_EX_register(Maat_feather_t feather, int table_id,
+										Maat_plugin_EX_new_func_t* new_func,
+										Maat_plugin_EX_free_func_t* free_func,
+										Maat_plugin_EX_dup_func_t* dup_func,
+										Maat_plugin_EX_key2index_func_t* key2index_func,
+										long argl, void *argp);
+//Data is duplicated by dup_func of Maat_plugin_EX_register,  caller is responsible to free the data.
+MAAT_PLUGIN_EX_DATA Maat_plugin_get_EX_data(Maat_feather_t feather, int table_id, const char* key);
+
 enum MAAT_RULE_OPT
 {
 	MAAT_RULE_SERV_DEFINE	//VALUE is a char* buffer,SIZE= buffer size. 
