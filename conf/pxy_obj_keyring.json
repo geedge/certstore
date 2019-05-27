@@ -71,7 +71,7 @@
     ],
     "plugin_table": [
         {
-            "table_name": "PXY_OBJ_KEYRING",
+            "table_name": "PXY_PROFILE_KEYRING",
             "table_content": [
                 "0\t1\tname_01\troot\t/test/01\t/test/01\t15\trsa2048\tURI:http://www.test.com\t1\t/home/fengweihao/workspace/cert_store/test_data/mesalab-ca-untrust.pem\t/home/fengweihao/workspace/cert_store/test_data/mesalab-ca-untrust.pem",
                 "1\t1\tname_01\troot\t/test/01\t/test/01\t15\trsa2048\tURI:http://www.test.com\t1\t/home/fengweihao/workspace/cert_store/test_data/mesalab-ca.pem\t/home/fengweihao/workspace/cert_store/test_data/mesalab-ca.pem", 

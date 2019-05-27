@@ -2122,7 +2122,7 @@ int maat_feather_init()
 	}
     rte->feather = feather;
 
-    int table_id = maat_table_ex_init("PXY_OBJ_KEYRING",
+    int table_id = maat_table_ex_init("PXY_PROFILE_KEYRING",
                                       keyring_table_new_cb,
         					          keyring_table_free_cb,
         					          keyring_table_dup_cb);
