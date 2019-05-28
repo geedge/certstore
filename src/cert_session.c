@@ -820,6 +820,25 @@ redis_reget_callback(redisAsyncContext __attribute__((__unused__))*cl_ctx,
     return;
 }
 
+void keyring_table_free_cb(int __attribute__((__unused__))table_id, MAAT_PLUGIN_EX_DATA* ad,
+long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
+{
+	struct pxy_obj_keyring* pxy_obj=(struct pxy_obj_keyring*)(*ad);
+	pxy_obj->ref_cnt--;
+    if (pxy_obj->ref_cnt == 0)
+    {
+        X509_free(pxy_obj->root);
+        EVP_PKEY_free(pxy_obj->key);
+        kfree(&pxy_obj);
+        *ad=NULL;
+    }
+}
+
+void keyring_table_free(struct pxy_obj_keyring* pxy_obj)
+{
+    keyring_table_free_cb(0, (void **)&pxy_obj, 0, NULL);
+}
+
 int add_cert_ctx(X509_NAME* name, char* ctx[], int num)
 {
     int i = 0;
@@ -1009,21 +1028,15 @@ end:
 
 static struct pxy_obj_keyring* get_obj_for_id(int keyring_id)
 {
-#define KEY_LEN 16
 	struct pxy_obj_keyring *pxy_obj=NULL;
 
     struct config_bucket_t *rte = cert_default_config();
 
-	char cfg_id_str[KEY_LEN] = {0};
-	snprintf(cfg_id_str, KEY_LEN, "%d", keyring_id);
+	char cfg_id_str[16] = {0};
+	snprintf(cfg_id_str, sizeof(cfg_id_str), "%d", keyring_id);
 
 	int tables_id = rte->table_id;
 	pxy_obj = (struct pxy_obj_keyring*)maat_plugin_get_EX_data(rte->feather, tables_id, (const char*)cfg_id_str);
-	if(pxy_obj==NULL)
-	{
-		goto finish;
-	}
-finish:
 	return pxy_obj;
 }
 
@@ -1056,6 +1069,7 @@ static int x509_online_append(struct x509_object_ctx *def, struct request_t *req
             {
                 pxy_obj = get_obj_for_id(0);
             }
+            assert(pxy_obj!=NULL);
             mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Certificate issued by table id %d", keyring_id);
         }
         else
@@ -1109,6 +1123,8 @@ modify:
         X509_free(request->origin);
     X509_free(x509);
 finish:
+    if (pxy_obj)
+        keyring_table_free(pxy_obj);
     return _expire;
 }
 
@@ -2018,6 +2034,8 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
     }
     memset(pxy_obj, 0, sizeof(struct pxy_obj_keyring));
 
+	pxy_obj->ref_cnt = 1;
+
 	ret=sscanf(table_line, "%d\t%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d\t%s\t%s", &pxy_obj->keyring_id, &service, profile_name,
 		       pxy_obj->keyring_type, _priv_file, _publi_file, &pxy_obj->expire_after, pxy_obj->public_algo,
 		       pxy_obj->v3_ctl, &pxy_obj->is_valid, private_file, public_file);
@@ -2047,17 +2065,8 @@ void keyring_table_dup_cb(int __attribute__((__unused__))table_id,	MAAT_PLUGIN_E
 long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
 {
 	struct pxy_obj_keyring* pxy_obj=(struct pxy_obj_keyring*)(*from);
+	pxy_obj->ref_cnt++;
 	*to=pxy_obj;
-}
-
-void keyring_table_free_cb(int __attribute__((__unused__))table_id, MAAT_PLUGIN_EX_DATA* ad,
-long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
-{
-	struct pxy_obj_keyring* pxy_obj=(struct pxy_obj_keyring*)(*ad);
-    X509_free(pxy_obj->root);
-    EVP_PKEY_free(pxy_obj->key);
-	kfree(&pxy_obj);
-	*ad=NULL;
 }
 
 int maat_table_ex_init(const char* table_name,
@@ -2128,7 +2137,7 @@ int maat_feather_init()
         					          keyring_table_dup_cb);
     if(table_id<0)
     {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore register table PXY_OBJ_KEYRING failed");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore register table PXY_PROFILE_KEYRING failed");
     }
 
     return 0;

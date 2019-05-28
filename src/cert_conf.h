@@ -36,6 +36,7 @@ struct request_t{
 
 struct pxy_obj_keyring{
 	int keyring_id;
+	int ref_cnt;
     char keyring_type[CT_ARRARY_LEN];
 	uint64_t expire_after;
 	char public_algo[CT_STRING_MAX];
