@@ -827,8 +827,10 @@ long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
 	pxy_obj->ref_cnt--;
     if (pxy_obj->ref_cnt == 0)
     {
-        X509_free(pxy_obj->root);
-        EVP_PKEY_free(pxy_obj->key);
+        if (pxy_obj->root)
+            X509_free(pxy_obj->root);
+        if (pxy_obj->key)
+            EVP_PKEY_free(pxy_obj->key);
         kfree(&pxy_obj);
         *ad=NULL;
     }
@@ -2022,7 +2024,7 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
     char private_file[CT_STRING_MAX] = {0}, public_file[CT_STRING_MAX]={0};
     char __attribute__((__unused__))_priv_file[CT_PATH_MAX] = {0};
     char __attribute__((__unused__))_publi_file[CT_PATH_MAX] = {0};
-    int service = 0, ret=0;
+    int ret=0;
 
 	struct pxy_obj_keyring *pxy_obj = NULL;
 
@@ -2036,10 +2038,10 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
 
 	pxy_obj->ref_cnt = 1;
 
-	ret=sscanf(table_line, "%d\t%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d\t%s\t%s", &pxy_obj->keyring_id, &service, profile_name,
-		       pxy_obj->keyring_type, _priv_file, _publi_file, &pxy_obj->expire_after, pxy_obj->public_algo,
-		       pxy_obj->v3_ctl, &pxy_obj->is_valid, private_file, public_file);
-	if(ret!=12)
+	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d", &pxy_obj->keyring_id, profile_name,
+		       pxy_obj->keyring_type, private_file, public_file, &pxy_obj->expire_after, pxy_obj->public_algo,
+		       pxy_obj->v3_ctl, &pxy_obj->is_valid);
+	if(ret!=9)
 	{
         kfree(&pxy_obj);
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore parse config failed: %s", table_line);
