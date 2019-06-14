@@ -843,7 +843,7 @@ long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
     if (ad == NULL)
         return;
 	struct pxy_obj_keyring* pxy_obj=(struct pxy_obj_keyring*)(*ad);
-	atomic64_dec(&pxy_obj->ref_cnt);	
+	atomic64_dec(&pxy_obj->ref_cnt);
     if (atomic64_read(&pxy_obj->ref_cnt) == 0)
     {
         if (pxy_obj->root)
@@ -989,64 +989,6 @@ finish:
 	return serial;
 }
 
-static int check(X509_STORE *ctx, X509 *x,
-                 STACK_OF(X509) *uchain, STACK_OF(X509) *tchain,
-                 STACK_OF(X509_CRL) *crls, ENGINE __attribute__((__unused__))*e)
-{
-    int i = 0, ret = 0;
-    X509_STORE_CTX *csc;
-
-    csc = X509_STORE_CTX_new();
-    if (csc == NULL) {
-        goto end;
-    }
-    X509_STORE_set_flags(ctx, 0);
-    if (!X509_STORE_CTX_init(csc, ctx, x, uchain)) {
-        goto end;
-    }
-    if (tchain)
-        X509_STORE_CTX_trusted_stack(csc, tchain);
-    if (crls)
-        X509_STORE_CTX_set0_crls(csc, crls);
-    i = X509_verify_cert(csc);
-    X509_STORE_CTX_free(csc);
-
-    ret = 0;
- end:
-    if (i > 0) {
-        ret = 1;
-    }
-    return (ret);
-}
-
-static int
-x509_check_chain(STACK_OF(X509) *stack_ca, X509 *ca, X509 *x)
-{
-    int i = 0, xret = 0;
-    X509_LOOKUP *lookup = NULL;
-    X509_STORE *cert_ctx = NULL;
-
-    cert_ctx = X509_STORE_new();
-    if (cert_ctx == NULL){
-        goto end;
-    }
-    X509_STORE_set_verify_cb(cert_ctx, NULL);
-
-    lookup = X509_STORE_add_lookup(cert_ctx, X509_LOOKUP_file());
-    if (stack_ca != NULL){
-        for (i = 0; i < sk_X509_num(stack_ca); i++){
-            X509_STORE_add_cert(lookup->store_ctx, sk_X509_value(stack_ca, i));
-        }
-    }
-    X509_STORE_add_cert(lookup->store_ctx, ca);
-    xret = check(cert_ctx, x, NULL, NULL, NULL, NULL);
-end:
-    if (cert_ctx != NULL)
-        X509_STORE_free(cert_ctx);
-
-    return xret;
-}
-
 static struct pxy_obj_keyring* get_obj_for_id(int keyring_id)
 {
 	struct pxy_obj_keyring *pxy_obj=NULL;
@@ -1063,7 +1005,7 @@ static struct pxy_obj_keyring* get_obj_for_id(int keyring_id)
 
 static int x509_online_append(struct x509_object_ctx *def, struct request_t *request,
                               char **root, char **sign, char *pkey,
-                              STACK_OF(X509) **stack_ca, int *verify)
+                              STACK_OF(X509) **stack_ca)
 {
     X509* x509 = NULL;
     int is_valid = request->is_valid;
@@ -1132,11 +1074,6 @@ modify:
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate serial number is %s", serial);
     OPENSSL_free(serial);
 
-    *verify = x509_check_chain(*stack_ca, _root, x509);
-    if (*verify != 1)
-    {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Certificate chain match failed");
-    }
     x509_get_msg_from_ca(x509, sign);
     x509_get_msg_from_ca(_root, root);
 
@@ -1277,26 +1214,18 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
 {
 #define MAX_CHAIN_LEN 6
     int xret = -1, i = 0;
-    int expire_after, verify = 0;
+    int expire_after;
     STACK_OF(X509) *stack_ca = NULL;
-    uint64_t startTime = 0, endTime = 0;
     libevent_thread *info   = threads + request->thread_id;
     char *sign = NULL, pkey[SG_DATA_SIZE] = {0};
     char *root = NULL;
 
-    startTime        = rt_time_ns();
-
-    expire_after = x509_online_append(&info->def, request, &root, &sign, pkey, &stack_ca, &verify);
+    expire_after = x509_online_append(&info->def, request, &root, &sign, pkey, &stack_ca);
     if (sign == NULL && pkey[0] == '\0'){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to sign certificate");
         evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
         goto finish;
     }
-    endTime           = rt_time_ns();
-    info->diffTime += (endTime - startTime);
-
-    mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "%lu - %lu = %lu", startTime, endTime, endTime - startTime);
-
     FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[3], FS_OP_SET, info->diffTime);
     FS_internal_operate(SGstats.handle, info->field_ids, 0, FS_OP_ADD, 1);
 
@@ -1317,7 +1246,7 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
 
     web_json_table_add(pkey, sign, chain, &request->odata);
 
-    if ((NULL == c) || (verify == 0)){
+    if (NULL == c){
         struct evhttp_request *evh_req = request->evh_req;
         FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[2], FS_OP_ADD, 1);
         evhttp_socket_send(evh_req, request->odata);
@@ -1558,7 +1487,6 @@ static void
 evhttp_socket_close_cb(struct evhttp_connection *evcon,
                        void __attribute__((__unused__))*arg)
 {
-    mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Evhttp connection is broken");
     if (NULL == evcon){
         goto finish;
     }
@@ -2038,7 +1966,7 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
     }
     memset(pxy_obj, 0, sizeof(struct pxy_obj_keyring));
 	atomic64_set(&pxy_obj->ref_cnt, 1);
-	
+
 	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d", &pxy_obj->keyring_id, profile_name,
 		       pxy_obj->keyring_type, private_file, public_file, &pxy_obj->expire_after, pxy_obj->public_algo,
 		       pxy_obj->v3_ctl, &pxy_obj->is_valid);
