@@ -175,32 +175,54 @@ static X509* base_load_pkcs12(BIO *in, EVP_PKEY **pkey, X509 **x, STACK_OF(X509)
     return _x;
 }
 
-static X509 *
-cert_base_load_x509 (BIO * cert, STACK_OF(X509) **stack_ca, int iFormat)
+static void cert_base_load_stack_info(BIO * in_bio, STACK_OF(X509) **stack_ca)
 {
-    X509 *x = NULL;
+    int x509_cnt = 0;
+    X509_INFO *x509_info;
+    STACK_OF(X509) *stack_x509 = NULL;
+    STACK_OF(X509_INFO) *stack_x509_info = NULL;
 
-    switch (iFormat)
+    if ((stack_x509 = sk_X509_new_null()) == NULL)
     {
-        case LOCAL_USER_DER:
-            x = d2i_X509_bio (cert, NULL);
-            break;
-        case LOCAL_USER_PEN:
-            x = PEM_read_bio_X509 (cert, NULL, NULL, NULL);
-            break;
-        case LOCAL_USER_P12:
-            x = base_load_pkcs12(cert, NULL, &x, stack_ca);
-            break;
-        default:
-            break;
+        X509err(X509_F_X509_VERIFY_CERT, ERR_R_MALLOC_FAILURE);
+        goto finish;
     }
-    return x;
+
+    stack_x509_info = PEM_X509_INFO_read_bio(in_bio, NULL, NULL, NULL);
+    if (stack_x509_info == NULL)
+    {
+        X509err(X509_F_X509_LOAD_CERT_CRL_FILE, ERR_R_PEM_LIB);
+        goto finish;
+    }
+
+    while (sk_X509_INFO_num(stack_x509_info)) {
+        x509_info = sk_X509_INFO_shift(stack_x509_info);
+        if (x509_info->x509 != NULL) {
+            sk_X509_push(stack_x509, x509_info->x509);
+            x509_info->x509 = NULL;
+            x509_cnt++;
+        }
+        X509_INFO_free(x509_info);
+    }
+    if (x509_cnt >= 1)
+        *stack_ca = stack_x509;
+
+finish:
+    if (stack_x509_info != NULL)
+        sk_X509_INFO_free(stack_x509_info);
+    return;
+}
+
+static X509 *
+cert_base_load_x509 (BIO * in_bio)
+{
+    return PEM_read_bio_X509 (in_bio, NULL, NULL, NULL);
 }
 
 static X509 *
 cert_load_x509(char *file, STACK_OF(X509) **stack_ca)
 {
-    BIO *in = NULL;
+    BIO *in_bio = NULL;
     X509 *x509 = NULL;
 
     if(!file){
@@ -208,27 +230,22 @@ cert_load_x509(char *file, STACK_OF(X509) **stack_ca)
         goto finish;
     }
 
-    if ((in = BIO_new(BIO_s_file())) == NULL) {
+    if ((in_bio = BIO_new(BIO_s_file())) == NULL) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Bio malloc failed.");
         goto finish;
     }
-    if (BIO_read_filename(in, file) <= 0) {
+    if (BIO_read_filename(in_bio, file) <= 0) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Error opening %s", file);
         goto finish;
     }
 
-    /**try pem */
-    if ((x509 = cert_base_load_x509(in, stack_ca, LOCAL_USER_PEN)) != NULL)
-        goto end;
-    (void)BIO_reset (in);
-    if ((x509 = cert_base_load_x509(in, stack_ca, LOCAL_USER_P12)) != NULL)
-        goto end;
-    (void)BIO_reset (in);
-    if ((x509 = cert_base_load_x509(in, stack_ca, LOCAL_USER_DER)) != NULL)
-        goto end;
-end:
-    BIO_free (in);
-    in = NULL;
+    if ((x509 = cert_base_load_x509(in_bio)) == NULL){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Error loading pem file, %s",file);
+    }
+    cert_base_load_stack_info(in_bio, stack_ca);
+
+    BIO_free (in_bio);
+    in_bio = NULL;
 finish:
     return x509;
 }
@@ -823,9 +840,11 @@ redis_reget_callback(redisAsyncContext __attribute__((__unused__))*cl_ctx,
 void keyring_table_free_cb(int __attribute__((__unused__))table_id, MAAT_PLUGIN_EX_DATA* ad,
 long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
 {
+    if (ad == NULL)
+        return;
 	struct pxy_obj_keyring* pxy_obj=(struct pxy_obj_keyring*)(*ad);
-	pxy_obj->ref_cnt--;
-    if (pxy_obj->ref_cnt == 0)
+	atomic64_dec(&pxy_obj->ref_cnt);	
+    if (atomic64_read(&pxy_obj->ref_cnt) == 0)
     {
         if (pxy_obj->root)
             X509_free(pxy_obj->root);
@@ -1367,24 +1386,7 @@ void redis_get_callback(redisAsyncContext *c, void *r, void *privdata)
     return;
 }
 
-int x509_privatekey_init2(char * private_file, char * public_file,
-                          EVP_PKEY **key, X509 **root, STACK_OF(X509) **stack_ca)
-{
-    if ((*root = cert_load_x509(public_file, stack_ca)) == NULL ){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Application for x509 failed");
-		goto finish;
-	}
-
-    if ((*key = cert_load_key(private_file)) == NULL){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Private key read failed");
-        goto finish;
-    }
-
-finish:
-    return 0;
-}
-
-int x509_privatekey_init(char *ca_file, EVP_PKEY **key, X509 **root)
+int x509_key_pair_init(char *ca_file, EVP_PKEY **key, X509 **root)
 {
     int xret = -1;
 	FILE *fp; RSA *rsa = NULL;
@@ -1707,14 +1709,14 @@ task_private_init(struct event_base *base, libevent_thread *info)
     if (config->local_debug)
     {
         /* Initialize the X509 CA*/
-        xret = x509_privatekey_init(config->ca_path, &info->def.key, &info->def.root);
+        xret = x509_key_pair_init(config->ca_path, &info->def.key, &info->def.root);
         if (xret < 0 || !(info->def.key) || !(info->def.root)){
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the x509 certificate");
             goto finish;
         }
 
         /* Initialize the insec CA*/
-        xret = x509_privatekey_init(config->uninsec_path, &info->def.insec_key, &info->def.insec_root);
+        xret = x509_key_pair_init(config->uninsec_path, &info->def.insec_key, &info->def.insec_root);
         if (xret < 0 || !(info->def.key) || !(info->def.root)){
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the insec x509 certificate");
             goto finish;
@@ -2035,9 +2037,8 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
         goto finish;
     }
     memset(pxy_obj, 0, sizeof(struct pxy_obj_keyring));
-
-	pxy_obj->ref_cnt = 1;
-
+	atomic64_set(&pxy_obj->ref_cnt, 1);
+	
 	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d", &pxy_obj->keyring_id, profile_name,
 		       pxy_obj->keyring_type, private_file, public_file, &pxy_obj->expire_after, pxy_obj->public_algo,
 		       pxy_obj->v3_ctl, &pxy_obj->is_valid);
@@ -2048,14 +2049,20 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
         goto finish;
 	}
 
-    ret = x509_privatekey_init2(private_file, public_file, &pxy_obj->key, &pxy_obj->root, &pxy_obj->stack_ca);
-    if (ret < 0 || !pxy_obj->key || !pxy_obj->root){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "initialize the x509 certificate failed, the keyring id is %d",
+    /*Load PUBLICKEY***/
+    if ((pxy_obj->root = cert_load_x509(public_file, &pxy_obj->stack_ca)) == NULL ){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "initialize the x509 publickey failed, the keyring id is %d",
+                         pxy_obj->keyring_id);
+		goto finish;
+	}
+    /*Load PRIVATEKEY**/
+    if ((pxy_obj->key = cert_load_key(private_file)) == NULL){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "initialize the x509 privatekey failed, the keyring id is %d",
                          pxy_obj->keyring_id);
         goto finish;
     }
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "initialize the x509 certificate, the keyring id is %d",
-                         pxy_obj->keyring_id);
+                     pxy_obj->keyring_id);
     x509_get_fingerprint(pxy_obj->root, pxy_obj->finger);
 
 	*ad = pxy_obj;
@@ -2067,7 +2074,7 @@ void keyring_table_dup_cb(int __attribute__((__unused__))table_id,	MAAT_PLUGIN_E
 long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
 {
 	struct pxy_obj_keyring* pxy_obj=(struct pxy_obj_keyring*)(*from);
-	pxy_obj->ref_cnt++;
+	atomic64_inc (&pxy_obj->ref_cnt);
 	*to=pxy_obj;
 }
 

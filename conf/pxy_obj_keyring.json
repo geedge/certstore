@@ -72,12 +72,11 @@
     "plugin_table": [
         {
             "table_name": "PXY_PROFILE_KEYRING",
-            "table_content": [
-                "0\t1\tname_01\troot\t/test/01\t/test/01\t15\trsa2048\tURI:http://www.test.com\t1\t/home/fengweihao/workspace/cert_store/test_data/mesalab-ca-untrust.pem\t/home/fengweihao/workspace/cert_store/test_data/mesalab-ca-untrust.pem",
-                "1\t1\tname_01\troot\t/test/01\t/test/01\t15\trsa2048\tURI:http://www.test.com\t1\t/home/fengweihao/workspace/cert_store/test_data/mesalab-ca.pem\t/home/fengweihao/workspace/cert_store/test_data/mesalab-ca.pem", 
-				"363\t1\tname_02\troot\t/test/01\t/test/01\t90\trsa2048\tnull\t1\t/home/fengweihao/workspace/cert_store/test_data/tango-ca-trust-ca.pem\t/home/fengweihao/workspace/cert_store/test_data/tango-ca-trust-ca.pem",    
-				"364\t1\tname_06\tintermediate\t/test/01\t/test/01\t30\trsa2048\tnull\t1\t /home/fengweihao/workspace/cert_store/test_data/tango-v2.key\t/home/fengweihao/workspace/cert_store/test_data/tango-v2.p12",	
-				"365\t1\tname_06\tend-entity\t/test/01\t/test/01\t30\trsa2048\tnull\t1\t/home/fengweihao/workspace/cert_store/test_data/sina.key\t/home/fengweihao/workspace/cert_store/test_data/sina.p12"
+			  "table_content": [
+                "0\tname_01\troot\t/home/fengweihao/workspace/cert_store/test_data/tango-ca-v3-untrust-ca.pem\t/home/fengweihao/workspace/cert_store/test_data/tango-ca-v3-untrust-ca.pem\t30\tNULL\tNULL\t1\t",
+				"1\tname_01\troot\t/home/fengweihao/workspace/cert_store/test_data/tango-ca-v3-trust-ca.pem\t/home/fengweihao/workspace/cert_store/test_data/tango-ca-v3-trust-ca.pem\t30\tNULL\tNULL\t1\t",
+				
+				"2\tname_01\tintermediate\t/home/fengweihao/workspace/cert_store/test_data/Tango-National-Proxy-L2.key\t/home/fengweihao/workspace/cert_store/test_data/Tango-National-Proxy-L2.pem\t30\tNULL\tNULL\t1\t"
             ]
         }
     ]
