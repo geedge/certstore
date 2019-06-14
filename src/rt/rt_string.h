@@ -57,9 +57,14 @@ typedef struct{
 
 #define atomic_add(x, y) (__sync_add_and_fetch((&(((atomic_t *)x)->counter)), (y)))
 #define atomic64_add(x, y) (__sync_add_and_fetch((&(((atomic64_t *)x)->counter)), (y)))
+#define atomic64_sub(x, y) (__sync_sub_and_fetch((&(((atomic64_t *)x)->counter)), (y)))
 
-static inline void atomic_set(atomic_t *v, int32_t val)
+#define atomic64_inc(x)  (atomic64_add((x), 1))
+#define atomic64_dec(x) (atomic64_sub((x), 1))
+
+static inline void atomic64_set(atomic64_t *v, int64_t val)
 {
     v->counter = val;
 }
+
 #endif
