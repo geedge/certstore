@@ -11,22 +11,22 @@ install:
 #
 #	cp -f lib/*  /usr/local/lib/
 #	sudo ldconfig
-	if [ ! -d "/home/ceiec/certstore" ]; then mkdir -p "/home/ceiec/certstore"; fi
+	if [ ! -d "/home/tsg/certstore" ]; then mkdir -p "/home/tsg/certstore"; fi
 	
 	chmod +x certstore r2_certstore r3_certstore
 	chmod +x tool/signssl.sh  tool/x509
 
 	for d in $(SUBDIRS); do \
-	cp -rf $$d /home/ceiec/certstore; \
+	cp -rf $$d /home/tsg/certstore; \
 	done 
 
 update:
 	chmod +x certstore
-	cp -f certstore /home/ceiec/certstore
+	cp -f certstore /home/tsg/certstore
 
 #	cp -f bin/cert_server /usr/local/bin/
 
 uninstall:
-	rm -rf /home/ceiec/certstore
+	rm -rf /home/tsg/certstore
 
 
