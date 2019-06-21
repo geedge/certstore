@@ -500,12 +500,9 @@ x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
 	if (rv == -1)
 		goto errout;
 
-	rv = ssl_x509_v3ext_copy_by_nid(crt, origcrt,
-	                                NID_key_usage);
-	if (rv == 0)
-		rv = ssl_x509_v3ext_add(&ctx, crt, "keyUsage",
-		                                   "digitalSignature,"
-		                                   "keyEncipherment");
+	rv = ssl_x509_v3ext_add(&ctx, crt, "keyUsage",
+		                               "digitalSignature,"
+		                               "keyEncipherment");
 	if (rv == -1)
 		goto errout;
 
