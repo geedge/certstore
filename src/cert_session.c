@@ -450,9 +450,45 @@ finish:
     return crlurl;
 }
 
+static time_t ASN1_GetTimeT(ASN1_TIME* time)
+{
+    struct tm t;
+    const char* str = (const char*) time->data;
+    size_t i = 0;
+
+    memset(&t, 0, sizeof(t));
+
+    if (time->type == V_ASN1_UTCTIME) {/* two digit year */
+        t.tm_year = (str[i++] - '0') * 10;
+        t.tm_year += (str[i++] - '0');
+        if (t.tm_year < 70)
+            t.tm_year += 100;
+    } else if (time->type == V_ASN1_GENERALIZEDTIME) {/* four digit year */
+        t.tm_year = (str[i++] - '0') * 1000;
+        t.tm_year+= (str[i++] - '0') * 100;
+        t.tm_year+= (str[i++] - '0') * 10;
+        t.tm_year+= (str[i++] - '0');
+        t.tm_year -= 1900;
+    }
+    t.tm_mon  = (str[i++] - '0') * 10;
+    t.tm_mon += (str[i++] - '0') - 1; // -1 since January is 0 not 1.
+    t.tm_mday = (str[i++] - '0') * 10;
+    t.tm_mday+= (str[i++] - '0');
+    t.tm_hour = (str[i++] - '0') * 10;
+    t.tm_hour+= (str[i++] - '0');
+    t.tm_min  = (str[i++] - '0') * 10;
+    t.tm_min += (str[i++] - '0');
+    t.tm_sec  = (str[i++] - '0') * 10;
+    t.tm_sec += (str[i++] - '0');
+
+    /* Note: we did not adjust the time based on time zone information */
+	setenv("TZ", "UTC", 1);
+    return mktime(&t);
+}
+
 X509 *
 x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
-                        int days, char *crl)
+                    uint64_t *expire, char *crl)
 {
 	int rv;
 	X509 *crt = NULL;
@@ -476,11 +512,16 @@ x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
 	    !X509_set_subject_name(crt, subject) ||
 	    !X509_set_issuer_name(crt, issuer) ||
 	    ssl_x509_set_serial(X509_get_serialNumber(crt)) == -1 ||
-	    !X509_gmtime_adj(X509_get_notBefore(crt), (long)(sizeof_seconds(-1))) ||
-	    !X509_time_adj_ex(X509_get_notAfter(crt), days, 0, NULL) ||
 	    !X509_set_pubkey(crt, key))
 		goto errout;
 
+	ASN1_TIME_set(X509_get_notBefore(crt), ASN1_GetTimeT(X509_get_notBefore(origcrt)));
+	ASN1_TIME_set(X509_get_notAfter(crt), ASN1_GetTimeT(X509_get_notAfter(origcrt)));
+
+	int day = 0, sec = 0;
+	ASN1_TIME_diff(&day, &sec, X509_get_notBefore(crt), X509_get_notAfter(crt));
+	*expire = sizeof_seconds(day) + sec;
+	
     EVP_PKEY_free(key);
 //extensions
 	X509V3_CTX ctx;
@@ -921,14 +962,14 @@ static struct pxy_obj_keyring* get_obj_for_id(int keyring_id)
 	return pxy_obj;
 }
 
-static int x509_online_append(struct x509_object_ctx *def, struct request_t *request,
-                              char **root, char **sign, char *pkey,
-                              STACK_OF(X509) **stack_ca)
+static uint64_t x509_online_append(struct x509_object_ctx *def, struct request_t *request,
+                              		char **root, char **sign, char *pkey,
+                              		STACK_OF(X509) **stack_ca)
 {
     X509* x509 = NULL;
     int is_valid = request->is_valid;
     int keyring_id = request->keyring_id;
-    int _expire = 0; char *_crl = NULL;
+    uint64_t expire = 0; char *_crl = NULL;
     char *serial = NULL;
     X509 *_root = NULL; EVP_PKEY *_key = NULL;
 
@@ -957,7 +998,6 @@ static int x509_online_append(struct x509_object_ctx *def, struct request_t *req
         {
             _root = (is_valid == 1) ? def->root : def->insec_root;
             _key  = (is_valid == 1) ? def->key  : def->insec_key;
-            _expire = cert_default_config()->expire_after;
             mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Certificate issued by local cert");
             goto modify;
         }
@@ -979,15 +1019,13 @@ static int x509_online_append(struct x509_object_ctx *def, struct request_t *req
     }
     _root = pxy_obj->root;
     _key  = pxy_obj->key;
-    _expire = pxy_obj->expire_after;
     _crl    = pxy_obj->v3_ctl;
 modify:
-    x509 = x509_modify_by_cert(_root, _key, request->origin, pkey,
-                                     _expire, _crl);
+    x509 = x509_modify_by_cert(_root, _key, request->origin, pkey, &expire, _crl);
     if (!x509){
         goto finish;
     }
-
+	
     serial = x509_get_sn(x509);
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate serial number is %s", serial);
     OPENSSL_free(serial);
@@ -1001,7 +1039,7 @@ modify:
 finish:
     if (pxy_obj)
         keyring_table_free(pxy_obj);
-    return _expire;
+    return expire;
 }
 
 static char readBytes(char *str)
@@ -1017,8 +1055,7 @@ static char readBytes(char *str)
 }
 
 static int
-rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request,
-                char *odata, uint64_t expire_after)
+rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request, char *odata, uint64_t expire_after)
 {
     int xret = -1;
     redisReply *reply;
@@ -1026,8 +1063,7 @@ rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request,
     libevent_thread *thread        = threads + request->thread_id;
     struct evhttp_request *evh_req = request->evh_req;
 
-    reply = (redisReply *)redisCommand(thread->sync, "set %s %s ex %d nx", request->rkey, odata,
-                                             sizeof_seconds(expire_after));
+    reply = (redisReply *)redisCommand(thread->sync, "set %s %s ex %d nx", request->rkey, odata, expire_after);
     if (NULL == reply)
         goto free;
 
@@ -1132,7 +1168,7 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
 {
 #define MAX_CHAIN_LEN 6
     int xret = -1, i = 0;
-    int expire_after;
+    uint64_t expire_after;
     STACK_OF(X509) *stack_ca = NULL;
     libevent_thread *info   = threads + request->thread_id;
     char *sign = NULL, pkey[SG_DATA_SIZE] = {0};
@@ -1161,7 +1197,6 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
     }else{
         chain[0] = root;
     }
-
     web_json_table_add(pkey, sign, chain, &request->odata);
 
     if (NULL == c){
@@ -1173,8 +1208,7 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
         xret = 0;
         goto finish;
     }
-
-    xret = rediSyncCommand(c, request, request->odata, expire_after);
+    xret = rediSyncCommand(c, request, request->odata, MIN(expire_after, sizeof_seconds(1)));
     if (xret < 0){
         goto finish;
     }
@@ -1885,10 +1919,10 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
     memset(pxy_obj, 0, sizeof(struct pxy_obj_keyring));
 	atomic64_set(&pxy_obj->ref_cnt, 1);
 
-	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d", &pxy_obj->keyring_id, profile_name,
-		       pxy_obj->keyring_type, private_file, public_file, &pxy_obj->expire_after, pxy_obj->public_algo,
+	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%d", &pxy_obj->keyring_id, profile_name,
+		       pxy_obj->keyring_type, private_file, public_file, pxy_obj->public_algo,
 		       pxy_obj->v3_ctl, &pxy_obj->is_valid);
-	if(ret!=9)
+	if(ret!=8)
 	{
         kfree(&pxy_obj);
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore parse config failed: %s", table_line);
