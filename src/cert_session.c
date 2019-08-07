@@ -4,7 +4,7 @@
 	> Mail:
 	> Created Time: Fri 01 Jun 2018 02:00:56 AM PDT
  ************************************************************************/
-
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -73,6 +73,7 @@ static struct fs_stats_t SGstats = {
 };
 
 #define sizeof_seconds(x)  (x * 24 * 60 * 60)
+#define half_hours(x)    (x * 1800)
 
 void connectCallback(const struct redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
@@ -487,8 +488,7 @@ static time_t ASN1_GetTimeT(ASN1_TIME* time)
 }
 
 X509 *
-x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
-                    uint64_t *expire, char *crl)
+x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey, int *expire_time, char *crlurl)
 {
 	int rv;
 	X509 *crt = NULL;
@@ -515,13 +515,23 @@ x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
 	    !X509_set_pubkey(crt, key))
 		goto errout;
 
-	ASN1_TIME_set(X509_get_notBefore(crt), ASN1_GetTimeT(X509_get_notBefore(origcrt)));
-	ASN1_TIME_set(X509_get_notAfter(crt), ASN1_GetTimeT(X509_get_notAfter(origcrt)));
+	if (*expire_time == -1)
+	{		
+		int day = 0, sec = 0;
+		ASN1_TIME_set(X509_get_notBefore(crt), ASN1_GetTimeT(X509_get_notBefore(origcrt)));
+		ASN1_TIME_set(X509_get_notAfter(crt), ASN1_GetTimeT(X509_get_notAfter(origcrt)));
+		ASN1_TIME_diff(&day, &sec, X509_get_notBefore(crt), X509_get_notAfter(crt));
+		*expire_time = MIN(sizeof_seconds(day) + sec, sizeof_seconds(1));
+	}
+	else
+	{				
+		if(!X509_gmtime_adj(X509_get_notBefore(crt), (long)(0 - half_hours(*expire_time))) ||
+		   !X509_gmtime_adj(X509_get_notAfter(crt), (long)(half_hours(*expire_time))))
+		{
+			goto errout;
+		}
+	}
 
-	int day = 0, sec = 0;
-	ASN1_TIME_diff(&day, &sec, X509_get_notBefore(crt), X509_get_notAfter(crt));
-	*expire = sizeof_seconds(day) + sec;
-	
     EVP_PKEY_free(key);
 //extensions
 	X509V3_CTX ctx;
@@ -555,15 +565,17 @@ x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey,
 	if (rv == -1)
 		goto errout;
 
-    if (crl != NULL && STRCMP(crl, "null")){
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Sign certificate the CRL is %s", crl);
-        /**Add URI:**/
-        char _crl[516] = {0};
-        snprintf(_crl, 516, "%s%s", "URI:", crl);
-        if (ssl_x509_v3ext_add(&ctx, crt, "crlDistributionPoints",
-		                       _crl) == -1) {
+    if (crlurl != NULL && strcasecmp(crlurl, "null")){
+        mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Sign certificate the CRL is %s", crlurl);
+		char * crlurlval;
+		if (asprintf(&crlurlval, "URI:%s", crlurl) < 0)
+			goto errout;
+		if (ssl_x509_v3ext_add(&ctx, crt, "crlDistributionPoints", crlurlval) == -1)
+		{
+			free(crlurlval);
 			goto errout;
 		}
+		free(crlurlval);
     }
 	/* no extraname provided: copy original subjectAltName ext */
 	if (ssl_x509_v3ext_copy_by_nid(crt, origcrt,
@@ -962,16 +974,16 @@ static struct pxy_obj_keyring* get_obj_for_id(int keyring_id)
 	return pxy_obj;
 }
 
-static uint64_t x509_online_append(struct x509_object_ctx *def, struct request_t *request,
+static int x509_online_append(struct x509_object_ctx *def, struct request_t *request,
                               		char **root, char **sign, char *pkey,
                               		STACK_OF(X509) **stack_ca)
 {
     X509* x509 = NULL;
     int is_valid = request->is_valid;
     int keyring_id = request->keyring_id;
-    uint64_t expire = 0; char *_crl = NULL;
+    int expire_time = 0; char *crlurl = NULL;
     char *serial = NULL;
-    X509 *_root = NULL; EVP_PKEY *_key = NULL;
+    X509 *cacrt = NULL; EVP_PKEY *cakey = NULL;
 
     struct config_bucket_t *rte = cert_default_config();
 
@@ -996,8 +1008,9 @@ static uint64_t x509_online_append(struct x509_object_ctx *def, struct request_t
         }
         else
         {
-            _root = (is_valid == 1) ? def->root : def->insec_root;
-            _key  = (is_valid == 1) ? def->key  : def->insec_key;
+            cacrt = (is_valid == 1) ? def->root : def->insec_root;
+            cakey  = (is_valid == 1) ? def->key  : def->insec_key;
+            expire_time = cert_default_config()->expire_after;
             mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Certificate issued by local cert");
             goto modify;
         }
@@ -1017,21 +1030,21 @@ static uint64_t x509_online_append(struct x509_object_ctx *def, struct request_t
                          keyring_id, pxy_obj->stack_ca);
         *stack_ca = pxy_obj->stack_ca;
     }
-    _root = pxy_obj->root;
-    _key  = pxy_obj->key;
-    _crl    = pxy_obj->v3_ctl;
+    cacrt = pxy_obj->root;
+    cakey  = pxy_obj->key;
+    expire_time = pxy_obj->expire_after;
+    crlurl    = pxy_obj->v3_ctl;
 modify:
-    x509 = x509_modify_by_cert(_root, _key, request->origin, pkey, &expire, _crl);
+    x509 = x509_modify_by_cert(cacrt, cakey, request->origin, pkey, &expire_time, crlurl);
     if (!x509){
         goto finish;
     }
-	
     serial = x509_get_sn(x509);
-    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate serial number is %s", serial);
+    mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "The certificate serial number is %s", serial);
     OPENSSL_free(serial);
 
     x509_get_msg_from_ca(x509, sign);
-    x509_get_msg_from_ca(_root, root);
+    x509_get_msg_from_ca(cacrt, root);
 
     if (request->origin)
         X509_free(request->origin);
@@ -1039,7 +1052,7 @@ modify:
 finish:
     if (pxy_obj)
         keyring_table_free(pxy_obj);
-    return expire;
+    return expire_time;
 }
 
 static char readBytes(char *str)
@@ -1055,7 +1068,7 @@ static char readBytes(char *str)
 }
 
 static int
-rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request, char *odata, uint64_t expire_after)
+rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request, char *odata, int expire_after)
 {
     int xret = -1;
     redisReply *reply;
@@ -1168,13 +1181,13 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
 {
 #define MAX_CHAIN_LEN 6
     int xret = -1, i = 0;
-    uint64_t expire_after;
+    uint64_t expire_time;
     STACK_OF(X509) *stack_ca = NULL;
     libevent_thread *info   = threads + request->thread_id;
     char *sign = NULL, pkey[SG_DATA_SIZE] = {0};
     char *root = NULL;
 
-    expire_after = x509_online_append(&info->def, request, &root, &sign, pkey, &stack_ca);
+    expire_time = x509_online_append(&info->def, request, &root, &sign, pkey, &stack_ca);
     if (sign == NULL && pkey[0] == '\0'){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to sign certificate");
         evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
@@ -1197,6 +1210,8 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
     }else{
         chain[0] = root;
     }
+	printf("sign = %s\n", sign);
+	
     web_json_table_add(pkey, sign, chain, &request->odata);
 
     if (NULL == c){
@@ -1208,7 +1223,7 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
         xret = 0;
         goto finish;
     }
-    xret = rediSyncCommand(c, request, request->odata, MIN(expire_after, sizeof_seconds(1)));
+    xret = rediSyncCommand(c, request, request->odata, expire_time);
     if (xret < 0){
         goto finish;
     }
@@ -1919,10 +1934,10 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
     memset(pxy_obj, 0, sizeof(struct pxy_obj_keyring));
 	atomic64_set(&pxy_obj->ref_cnt, 1);
 
-	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%d", &pxy_obj->keyring_id, profile_name,
-		       pxy_obj->keyring_type, private_file, public_file, pxy_obj->public_algo,
+	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d", &pxy_obj->keyring_id, profile_name,
+		       pxy_obj->keyring_type, private_file, public_file, &pxy_obj->expire_after, pxy_obj->public_algo,
 		       pxy_obj->v3_ctl, &pxy_obj->is_valid);
-	if(ret!=8)
+	if(ret!=9)
 	{
         kfree(&pxy_obj);
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore parse config failed: %s", table_line);
