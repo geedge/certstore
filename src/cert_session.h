@@ -46,7 +46,7 @@ typedef struct {
 
     uint64_t diffTime;
 
-} libevent_thread;
+} cert_thread_ctx;
 
 int cert_session_init();
 

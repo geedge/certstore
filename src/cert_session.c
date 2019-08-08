@@ -60,7 +60,7 @@
 #define	CM_UPDATE_TYPE_FULL	1
 #define	CM_UPDATE_TYPE_INC	2
 
-static libevent_thread *threads;
+static cert_thread_ctx *threads;
 
 struct fs_stats_t{
     int line_ids[4];
@@ -742,6 +742,22 @@ finish:
 	return x509;
 }
 
+void request_destroy(struct request_t *request)
+{
+	if (request->odata)
+	{
+		free(request->odata);
+		request->odata=NULL;
+	}
+	if (request->sni)
+	{
+		free(request->sni);
+		request->sni=NULL;
+	}
+	free(request);
+	request = NULL;
+}
+
 static
 int redis_rsync_init(struct event_base *base, struct redisAsyncContext **cl_ctx)
 {
@@ -798,11 +814,8 @@ redis_reget_callback(redisAsyncContext __attribute__((__unused__))*cl_ctx,
     struct request_t *request      = (struct request_t *)privdata;
 
     struct evhttp_request *evh_req = request->evh_req;
-
     evhttp_socket_send(evh_req, reply->str);
-
-    kfree(request->odata);
-    kfree(request);
+	request_destroy(request);
     return;
 }
 
@@ -1073,7 +1086,7 @@ rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request, char *odat
     int xret = -1;
     redisReply *reply;
 
-    libevent_thread *thread        = threads + request->thread_id;
+    cert_thread_ctx *thread        = threads + request->thread_id;
     struct evhttp_request *evh_req = request->evh_req;
 
     reply = (redisReply *)redisCommand(thread->sync, "set %s %s ex %d nx", request->rkey, odata, expire_after);
@@ -1103,9 +1116,7 @@ rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request, char *odat
 
 free:
     freeReplyObject(reply);
-    kfree(request->odata);
-    kfree(request);
-
+	request_destroy(request);
 finish:
     return xret;
 }
@@ -1183,7 +1194,7 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
     int xret = -1, i = 0;
     uint64_t expire_time;
     STACK_OF(X509) *stack_ca = NULL;
-    libevent_thread *info   = threads + request->thread_id;
+    cert_thread_ctx *info   = threads + request->thread_id;
     char *sign = NULL, pkey[SG_DATA_SIZE] = {0};
     char *root = NULL;
 
@@ -1209,17 +1220,14 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
         }
     }else{
         chain[0] = root;
-    }
-	printf("sign = %s\n", sign);
-	
+    }	
     web_json_table_add(pkey, sign, chain, &request->odata);
 
     if (NULL == c){
         struct evhttp_request *evh_req = request->evh_req;
         FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[2], FS_OP_ADD, 1);
         evhttp_socket_send(evh_req, request->odata);
-        kfree(request->odata);
-        kfree(request);
+        request_destroy(request);
         xret = 0;
         goto finish;
     }
@@ -1237,7 +1245,7 @@ redis_clnt_send(struct request_t *request, redisReply *reply)
 {
     int xret                       = -1;
 
-    libevent_thread *thread        = threads + request->thread_id;
+    cert_thread_ctx *thread        = threads + request->thread_id;
 
     if (!reply && !reply->str){
         evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
@@ -1253,7 +1261,7 @@ redis_clnt_send(struct request_t *request, redisReply *reply)
 finish:
     if (request->origin)
         X509_free(request->origin);
-    kfree(request);
+    request_destroy(request);
     return xret;
 }
 
@@ -1380,74 +1388,39 @@ void _urldecode(char url[])
     free(res);
 }
 
-static char*
-decode_capture(const char *uri, const char *key)
+static int http_decode_uri(struct evhttp_request *evh_req, struct request_t *request)
 {
-    int size = 0;
-    char *origin_uri = NULL;
-
-    char *urlecode = STRSTR(uri, key);
-    if (!urlecode){
-        size = 0;
-    }else{
-        size = strlen(urlecode);
-    }
-    int len = strlen(uri) - size;
-    origin_uri = (char *)malloc(len + 1);
-    memcpy(origin_uri, uri, len);
-
-    return origin_uri;
-}
-
-static char*
-decode_origin_cert(const char *uri, const char *key)
-{
-    char *origin = NULL;
-
-    char *urlecode = STRSTR(uri, key);
-    if (!urlecode){
-        goto finish;
-    }
-    origin = urlecode + 12;
-    _urldecode(origin);
-finish:
-    return origin;
-}
-
-static int
-thread_decode_uri(const char *uri, X509 **origin,
-                  int *keyring_id, char *sni, int *is_valid)
-{
-    const char *_origin = NULL, *id = NULL;
-    const char *_sni = NULL, *_valid = NULL;
-    char *decoded_uri = NULL, *ecode_uri = NULL;
+	int rv = 0;	
     struct evkeyvalq params;
 
-    decoded_uri = evhttp_decode_uri(ecode_uri = decode_capture(uri, "origin_cert"));
-    if (!decoded_uri){
-        goto finish;
+	const char *uri = evhttp_request_get_uri(evh_req);
+	char *decoded_uri = evhttp_decode_uri(uri);
+	if (!decoded_uri)
+	{
+		goto finish;
+	}	
+    rv = evhttp_parse_query(uri, &params);
+	if (rv != 0)
+	{
+		goto finish;
+	}
+	const char *keyring_id = evhttp_find_header(&params, "keyring_id");
+    if (keyring_id)
+    {
+        request->keyring_id = atoi(keyring_id);
     }
-    evhttp_parse_query(uri, &params);
-    id   = evhttp_find_header(&params, "keyring_id");
-    if (id)
-        *keyring_id = atoi(id);
-    _valid = evhttp_find_header(&params, "is_valid");
-    if (_valid)
-        *is_valid = atoi(_valid);
-    _sni = evhttp_find_header(&params, "sni");
-    if (_sni)
-         memcpy(sni, _sni, strlen(_sni));
-
-    _origin = decode_origin_cert(uri, "origin_cert");
-    if (_origin)
-        *origin = x509_get_ca_from_msg(_origin, STRLEN(_origin) + 1);
-
-    evhttp_clear_headers(&params);
-    free(decoded_uri);
-
+    const char *is_valid = evhttp_find_header(&params, "is_valid");
+    if (is_valid)
+    {
+        request->is_valid = atoi(is_valid);
+    }
+    const char *sni = evhttp_find_header(&params, "sni");
+    if (sni)
+    {
+		request->sni = strdup(sni);
+	}	
 finish:
-    free(ecode_uri);
-    return 0;
+	return 0;
 }
 
 static void
@@ -1488,58 +1461,49 @@ finish:
     return 0;
 }
 
-void
-pthread_work_proc(struct evhttp_request *evh_req, void *arg)
+void http_get_cb(struct evhttp_request *evh_req, void *arg)
 {
-    int xret                     = -1;
-    const char *cmdtype          = NULL;
-    struct request_t *request    = NULL;
-	struct evhttp_uri *decoded   = NULL;
-    libevent_thread *info = (libevent_thread *)arg;
+    int xret = -1;
+    cert_thread_ctx *info = (cert_thread_ctx *)arg;
 
-   /* we want to know if this connection closes on us */
-	evhttp_connection_set_closecb(evhttp_request_get_connection(evh_req), evhttp_socket_close_cb, NULL);
-
-	const char *uri = evhttp_request_get_uri(evh_req);
-     /* Decode the URI */
-	decoded = evhttp_uri_parse(uri);
-	if (!decoded) {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "It's not a good URI. Sending BADREQUEST");
+	if (evhttp_request_get_command(evh_req) != EVHTTP_REQ_POST) {
+		mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "FAILED (post type)");
 		goto error;
 	}
+	
+	struct request_t *request = (struct request_t *) kmalloc (sizeof(struct request_t), MPF_CLR, -1);
+	request->keyring_id = 0;
+	request->thread_id  = info->id;
+	request->evh_req    = evh_req;
 
-	request = (struct request_t *) kmalloc (sizeof(struct request_t), MPF_CLR, -1);
-    if (request != NULL){
-        memset(request, 0, sizeof(struct request_t));
-        request->keyring_id = 0;
-        request->thread_id  = info->id;
-        request->evh_req    = evh_req;
-    }
-	switch (evhttp_request_get_command(evh_req)) {
-        case EVHTTP_REQ_GET: cmdtype = "GET";     break;
-        default:             cmdtype = "unknown"; break;
+	http_decode_uri(evh_req, request);
+	mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "[Thread %d]Received request for uri, kering_id:%d, sni:%s, valid:%d",
+                     request->thread_id, request->keyring_id, request->sni, request->is_valid);
+
+	char *input = NULL; ssize_t inputlen=0;	
+	struct evbuffer * evbuf_body = evhttp_request_get_input_buffer(evh_req);	
+	if (!evbuf_body || 0==(inputlen = evbuffer_get_length(evbuf_body))
+		||!(input = (char *)evbuffer_pullup(evbuf_body,inputlen)))
+	{
+		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get certificate information.");
+		goto error;
 	}
-    FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[0], FS_OP_ADD, 1);
-
-    thread_decode_uri(uri, &request->origin, &request->keyring_id, request->sni,
-                      &request->is_valid);
-
-    mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "[Thread %d]Received a %s request for uri, kering_id:%d, sni:%s origin:%p valid:%d",
-                     request->thread_id, cmdtype, request->keyring_id, request->sni, request->origin, request->is_valid);
-
-    if (request->origin == NULL || !request->evh_req){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to resolve the request url");
-        kfree(request);
-        evhttp_uri_free(decoded);
+	request->origin = x509_get_ca_from_msg(input, inputlen + 1);
+    if (request->origin == NULL){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "The certificate is invalid.");
+		request_destroy(request);
         goto error;
     }
-
     x509_get_rkey(request->origin, request->keyring_id, request->rkey, request->is_valid);
     if (request->rkey[0] == '\0'){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Get the redis key from the certificate failed");
         goto error;
     }
-    mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Redis key is %s", request->rkey);
+    mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Redis key is %s", request->rkey);	
+	FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[0], FS_OP_ADD, 1);
+
+	/* we want to know if this connection closes on us */
+	evhttp_connection_set_closecb(evhttp_request_get_connection(evh_req), evhttp_socket_close_cb, NULL);
 
     if (info->cl_ctx->err != 0){
         xret = redis_clnt_pdu_send(request, NULL);
@@ -1552,7 +1516,6 @@ pthread_work_proc(struct evhttp_request *evh_req, void *arg)
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get information from redis server");
     }
 free:
-    evhttp_uri_free(decoded);
     goto finish;
 
 error:
@@ -1585,7 +1548,7 @@ finish:
 }
 
 static int
-task_private_init(struct event_base *base, libevent_thread *info)
+task_private_init(struct event_base *base, cert_thread_ctx *info)
 {
     int xret = -1;
     struct config_bucket_t *config = cert_default_config();
@@ -1628,34 +1591,32 @@ static void *pthread_worker_libevent(void *arg)
 	struct event_base *base           = NULL;
 	struct evhttp_bound_socket *bound = NULL;
 
-    libevent_thread *thread           = (libevent_thread *)arg;
+    cert_thread_ctx *thread_ctx           = (cert_thread_ctx *)arg;
 
     base = event_base_new();
     if (! base) {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Can'thread allocate event base");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Can'thread_ctx allocate event base");
         goto finish;
     }
-
     http = evhttp_new(base);
 	if (!http) {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "couldn'thread create evhttp. Exiting.");
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "couldn'thread_ctx create evhttp. Exiting.");
 		goto error;
 	}
-    thread->base = base;
+    thread_ctx->base = base;
 
     /* Context initialization */
-    xret = task_private_init(base, thread);
+    xret = task_private_init(base, thread_ctx);
     if (xret < 0){
         goto error;
     }
-    evhttp_set_cb(http, "/ca", pthread_work_proc, thread);
+    evhttp_set_cb(http, "/ca", http_get_cb, thread_ctx);
 
-    bound = evhttp_accept_socket_with_handle(http, thread->accept_fd);
+    bound = evhttp_accept_socket_with_handle(http, thread_ctx->accept_fd);
     if (bound != NULL) {
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Bound(%p) to port %d - Awaiting connections ... ", bound,
                         cert_default_config()->addr_t.e_port);
 	}
-
 	event_base_dispatch(base);
 error:
     event_base_free(base);
@@ -1704,7 +1665,7 @@ err:
 }
 
 static int
-fs_screen_preview(libevent_thread *thread)
+fs_screen_preview(cert_thread_ctx *thread)
 {
 	char buff[128] = {0};
 
@@ -1723,8 +1684,8 @@ redis_link_detection(uint32_t __attribute__((__unused__)) uid,
                     char **argv)
 {
     int tid = 0, xret = 0;
-    libevent_thread *info   = NULL;
-    libevent_thread *threads = (libevent_thread *)argv;
+    cert_thread_ctx *info   = NULL;
+    cert_thread_ctx *threads = (cert_thread_ctx *)argv;
 
     unsigned int thread_nu = cert_default_config()->thread_nu;
     for (tid = 0; tid < (int)thread_nu; tid++) {
@@ -1758,7 +1719,7 @@ libevent_socket_init()
     evutil_socket_t accept_fd = -1;
     int xret                  = -1;
     unsigned int tid          = 0;
-    libevent_thread *thread   = NULL;
+    cert_thread_ctx *thread   = NULL;
 
     unsigned int thread_nu    = cert_default_config()->thread_nu;
 
@@ -1772,12 +1733,12 @@ libevent_socket_init()
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Could not create a listen!");
         goto finish;
     }
-    threads = calloc(thread_nu, sizeof(libevent_thread));
+    threads = calloc(thread_nu, sizeof(cert_thread_ctx));
     if (! threads) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Can't allocate thread descriptors");
         goto finish;
     }
-    memset(threads, 0, thread_nu * sizeof(libevent_thread));
+    memset(threads, 0, thread_nu * sizeof(cert_thread_ctx));
 
     /* Create threads after we've done all the libevent setup. */
     for (tid = 0; tid < thread_nu; tid++) {
@@ -1835,7 +1796,7 @@ rt_get_pname_by_pid(pid_t pid, char *task_name)
 void sigproc(int __attribute__((__unused__))sig)
 {
     unsigned int tid            = 0;
-    libevent_thread *thread     = NULL;
+    cert_thread_ctx *thread     = NULL;
 
     struct config_bucket_t *rte = cert_default_config();
 
