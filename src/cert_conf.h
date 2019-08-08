@@ -36,15 +36,16 @@ struct request_t{
 
 struct pxy_obj_keyring{
 	int keyring_id;
-	atomic64_t ref_cnt;
+	int bits;
+	uint64_t expire_time;
+	EVP_PKEY *key;
+    X509 *root;
     char keyring_type[CT_ARRARY_LEN];
-	uint64_t expire_after;
 	char public_algo[CT_STRING_MAX];
 	char v3_ctl[CT_STRING_MAX];
     char finger[EVP_MAX_MD_SIZE];
-    EVP_PKEY *key;
-    X509 *root;
-	int is_valid;
+	int is_valid;	
+	atomic64_t ref_cnt;
     STACK_OF(X509) *stack_ca;
 };
 

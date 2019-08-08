@@ -73,10 +73,11 @@
         {
             "table_name": "PXY_PROFILE_KEYRING",
 			  "table_content": [
-                "0\tname_01\troot\t/home/fengweihao/workspace/cert_store/test_data/tango-ca-v3-untrust-ca.pem\t/home/fengweihao/workspace/cert_store/test_data/tango-ca-v3-untrust-ca.pem\t30\tNULL\tNULL\t1\t",
-				"1\tname_01\troot\t/home/fengweihao/workspace/cert_store/test_data/tango-ca-v3-trust-ca.pem\t/home/fengweihao/workspace/cert_store/test_data/tango-ca-v3-trust-ca.pem\t30\tNULL\tNULL\t1\t",
+                "0\tname_01\troot\t/home/fengweihao/build/transfer/test_cert/root/tango-ca-v3-untrust-ca.pem\t/home/fengweihao/build/transfer/test_cert/root/tango-ca-v3-untrust-ca.pem\t30\tNULL\tNULL\t1024\t1\t",
+				"1\tname_01\troot\t/home/fengweihao/build/transfer/test_cert/root/tango-ca-v3-trust-ca.pem\t/home/fengweihao/build/transfer/test_cert/root/tango-ca-v3-trust-ca.pem\t30\tNULL\tNULL\t1024\t1\t",
 				
-				"2\tname_01\tintermediate\t/home/fengweihao/workspace/cert_store/test_data/Tango-National-Proxy-L2.key\t/home/fengweihao/workspace/cert_store/test_data/Tango-National-Proxy-L2.pem\t30\tNULL\tNULL\t1\t"
+				"2\tname_01\troot\t/home/fengweihao/build/transfer/test_cert/root/tango-ca-trust-ca-key.pem\t/home/fengweihao/build/transfer/test_cert/root/tango-ca-trust-ca-cer.pem\t24\tNULL\tNULL\t2048\t1\t",
+				"3\tname_01\troot\t/home/fengweihao/build/transfer/test_cert/root/tango-ca-trust-ca-key.pem\t/home/fengweihao/build/transfer/test_cert/root/tango-ca-trust-ca-cer.pem\t-1\tNULL\tNULL\t4096\t1\t"
             ]
         }
     ]

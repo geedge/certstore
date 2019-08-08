@@ -16,13 +16,11 @@ src/rt            公共函数
 备注：
 发送请求命令：
 keyring id存在（读取表指定的证书颁发）
-curl -X GET "192.168.11.100:9991/ca?kering_id=1&origin_cert="xxxxxxxx"" -m 30 -v
+curl -F "blob=@tango-ca-v3.cer;type=text/plain" "http://192.168.11.100:9991/ca?keyring_id=1&sni="www.google.com"&is_valid=1" -m 30 -v
 keyring id不存在（读取本地默认证书颁发）
-curl -X GET "192.168.11.100:9991/ca?kering_id=12&origin_cert="xxxxxxx"" -m 30 -v
-keyring id存在，表中valid为不可用（读取keyring id = 256,不信任证书颁发）
-curl -X GET "192.168.11.100:9991/ca?kering_id=5&origin_cert="xxxxxxx"" -m 30 -v
-keyring id存在，证书类型为实体证书
-curl -X GET "192.168.11.100:9991/ca?kering_id=4&origin_cert="xxxxxxxx"" -m 30 -v
+curl -F "blob=@tango-ca-v3.cer;type=text/plain" "http://192.168.11.100:9991/ca?keyring_id=5&sni="www.google.com"&is_valid=1" -m 30 -v
+keyring id存在，表中valid为不可用（不信任证书颁发）
+curl -F "blob=@tango-ca-v3.cer;type=text/plain" "http://192.168.11.100:9991/ca?keyring_id=5&sni="www.google.com"&is_valid=0" -m 30 -v
 使用--daemon运行时，配置文件中使用绝对路径
 
 [安装包使用]

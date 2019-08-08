@@ -488,14 +488,14 @@ static time_t ASN1_GetTimeT(ASN1_TIME* time)
 }
 
 X509 *
-x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey, int *expire_time, char *crlurl)
+x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey, int *expire_time, char *crlurl, int bits)
 {
 	int rv;
 	X509 *crt = NULL;
     EVP_PKEY* key = NULL;
 	X509_NAME *subject = NULL, *issuer = NULL;
 
-    if(!create_client_key(&key, pkey, 1024)){
+    if(!create_client_key(&key, pkey, bits)){
         goto err;
     }
 //subjectname,issuername
@@ -992,9 +992,8 @@ static int x509_online_append(struct x509_object_ctx *def, struct request_t *req
                               		STACK_OF(X509) **stack_ca)
 {
     X509* x509 = NULL;
-    int is_valid = request->is_valid;
-    int keyring_id = request->keyring_id;
-    int expire_time = 0; char *crlurl = NULL;
+    int is_valid = request->is_valid; int keyring_id = request->keyring_id;
+    int expire_time = 0, bits = 0; char *crlurl = NULL;
     char *serial = NULL;
     X509 *cacrt = NULL; EVP_PKEY *cakey = NULL;
 
@@ -1045,10 +1044,11 @@ static int x509_online_append(struct x509_object_ctx *def, struct request_t *req
     }
     cacrt = pxy_obj->root;
     cakey  = pxy_obj->key;
-    expire_time = pxy_obj->expire_after;
+    expire_time = pxy_obj->expire_time;
     crlurl    = pxy_obj->v3_ctl;
+	bits  = pxy_obj->bits;
 modify:
-    x509 = x509_modify_by_cert(cacrt, cakey, request->origin, pkey, &expire_time, crlurl);
+    x509 = x509_modify_by_cert(cacrt, cakey, request->origin, pkey, &expire_time, crlurl, bits);
     if (!x509){
         goto finish;
     }
@@ -1220,7 +1220,7 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
         }
     }else{
         chain[0] = root;
-    }	
+    }
     web_json_table_add(pkey, sign, chain, &request->odata);
 
     if (NULL == c){
@@ -1895,10 +1895,10 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
     memset(pxy_obj, 0, sizeof(struct pxy_obj_keyring));
 	atomic64_set(&pxy_obj->ref_cnt, 1);
 
-	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d", &pxy_obj->keyring_id, profile_name,
-		       pxy_obj->keyring_type, private_file, public_file, &pxy_obj->expire_after, pxy_obj->public_algo,
-		       pxy_obj->v3_ctl, &pxy_obj->is_valid);
-	if(ret!=9)
+	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d\t%d", &pxy_obj->keyring_id, profile_name,
+		       pxy_obj->keyring_type, private_file, public_file, &pxy_obj->expire_time, pxy_obj->public_algo,
+		       pxy_obj->v3_ctl, &pxy_obj->bits, &pxy_obj->is_valid);
+	if(ret!=10)
 	{
         kfree(&pxy_obj);
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore parse config failed: %s", table_line);
