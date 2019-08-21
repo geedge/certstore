@@ -36,7 +36,6 @@ struct request_t{
 
 struct pxy_obj_keyring{
 	int keyring_id;
-	int bits;
 	uint64_t expire_time;
 	EVP_PKEY *key;
     X509 *root;
@@ -71,6 +70,7 @@ struct ntc_maat_t{
 struct config_bucket_t{
     Maat_feather_t feather;
     int table_id;
+	int mode;
     unsigned int local_debug;
     unsigned int thread_nu;
 	unsigned int expire_after;

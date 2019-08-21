@@ -62,8 +62,18 @@
 
 static cert_thread_ctx *threads;
 
+enum http_action
+{
+	HTTP_ACTION_REQ = 0,
+	HTTP_ACTION_SQL,
+	HTTP_ACTION_SIGN,
+	HTTP_ACTION_ERR,
+	HTTP_ACTION_TIME,
+	__HTTP_ACTION_MAX
+};
+
 struct fs_stats_t{
-    int line_ids[4];
+    int line_ids[__HTTP_ACTION_MAX];
     screen_stat_handle_t handle;
 };
 
@@ -114,8 +124,27 @@ finish:
 	return;
 }
 
+static int x509_public_str2idx(const char *public_algo)
+{
+	int bits = 1024;
+
+	if (strcasestr(public_algo, "1024") != NULL)
+	{
+		bits = 1024;
+	}
+	if (strcasestr(public_algo, "2048") != NULL)
+	{
+		bits = 2048;
+	}
+	if (strcasestr(public_algo, "4096") != NULL)
+	{
+		bits = 4096;
+	}
+	return bits;
+}
+
 static
-int create_client_key(EVP_PKEY** pkey, char *pubkey, int bits)
+int create_client_key(EVP_PKEY** pkey, char *pubkey, char *public_algo)
 {
     RSA *rsa = NULL;
     EVP_PKEY *pk = NULL;
@@ -125,7 +154,7 @@ int create_client_key(EVP_PKEY** pkey, char *pubkey, int bits)
         goto err;
     }
 
-    rsa = RSA_generate_key(bits, RSA_F4, NULL, NULL);
+    rsa = RSA_generate_key(x509_public_str2idx(public_algo), RSA_F4, NULL, NULL);
     if(!EVP_PKEY_assign_RSA(pk, rsa)){
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "create_client_key, assign key failed!");
         EVP_PKEY_free(pk);
@@ -488,14 +517,14 @@ static time_t ASN1_GetTimeT(ASN1_TIME* time)
 }
 
 X509 *
-x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey, int *expire_time, char *crlurl, int bits)
+x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey, int *expire_time, char *crlurl, char *public_algo)
 {
 	int rv;
 	X509 *crt = NULL;
     EVP_PKEY* key = NULL;
 	X509_NAME *subject = NULL, *issuer = NULL;
 
-    if(!create_client_key(&key, pkey, bits)){
+    if(!create_client_key(&key, pkey, public_algo)){
         goto err;
     }
 //subjectname,issuername
@@ -515,7 +544,7 @@ x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey, int
 	    !X509_set_pubkey(crt, key))
 		goto errout;
 
-	if (*expire_time == -1)
+	if (*expire_time <= 0)
 	{		
 		int day = 0, sec = 0;
 		ASN1_TIME_set(X509_get_notBefore(crt), ASN1_GetTimeT(X509_get_notBefore(origcrt)));
@@ -530,6 +559,7 @@ x509_modify_by_cert(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey, int
 		{
 			goto errout;
 		}
+		*expire_time = half_hours(*expire_time);
 	}
 
     EVP_PKEY_free(key);
@@ -779,6 +809,14 @@ finish:
 	return xret;
 }
 
+static int
+evhttp_socket_send_error(struct evhttp_request *req, int id, int error)
+{
+	FS_internal_operate(SGstats.handle, id, SGstats.line_ids[HTTP_ACTION_ERR], FS_OP_ADD, 1);
+	evhttp_send_error(req, error, 0);
+	return 0;
+}
+
 /* Callback used for the /dump URI, and for every non-GET request:
  * dumps all information to stdout and gives back a trivial 200 ok */
 static int
@@ -793,7 +831,8 @@ evhttp_socket_send(struct evhttp_request *req, char *sendbuf)
         goto err;
     }
     evhttp_add_header(evhttp_request_get_output_headers(req),
-		              "Content-Type", "test");
+		              "Content-Type", "text/html");	
+	evhttp_add_header(evhttp_request_get_output_headers(req), "Connection", "keep-alive");
     evbuffer_add_printf(evb, "%s", sendbuf);
     evhttp_send_reply(req, HTTP_OK, "OK", evb);
     goto done;
@@ -890,69 +929,6 @@ int rand_serial(BIGNUM *b, ASN1_INTEGER *ai)
     return ret;
 }
 
-X509 *x509_modify_by_cert_bak(X509 *cacrt, EVP_PKEY *cakey, const char* host,
-                          char *pubkey, const int days)
-{
-    X509* x = NULL;
-    EVP_PKEY* pk = NULL;
-
-    char* ctx[] = {(char*)host, "CN", "mystate",
-                             "mycity", "myorganization", "mygroup",
-                             "sample@sample.com"};
-
-    if(!create_client_key(&pk, pubkey, 1024)){
-        goto err;
-    }
-
-    if((x = X509_new()) == NULL){
-        goto err;
-    }
-
-    if (!X509_set_version(x, 0x02)){
-        goto err;
-    }
-
-    if (!X509_set_version(x, 0x02) ||
-        !X509_set_issuer_name(x, X509_get_subject_name(cacrt)) ||
-        !rand_serial(NULL, X509_get_serialNumber(x)) ||
-        !X509_gmtime_adj(X509_get_notBefore(x), 0L) ||
-        !X509_time_adj_ex(X509_get_notAfter(x), days, 0, NULL) ||
-        !X509_set_pubkey(x, pk) ||
-        !add_cert_ctx(X509_get_subject_name(x), ctx, 7))
-        goto err;
-#if 1
-
-    /* Add various extensions: standard extensions */
-    add_ext(cacrt, x, NID_basic_constraints, "critical,CA:FALSE");
-    add_ext(cacrt, x, NID_subject_key_identifier, "hash");
-    add_ext(cacrt, x, NID_key_usage, "Digital Signature, Key Encipherment, Data Encipherment");
-
-    /**/
-
-    add_ext(cacrt, x, NID_authority_key_identifier, "keyid:always");
-
-    add_ext(cacrt, x, NID_ext_key_usage, "serverAuth,clientAuth");
-    /*NID_certificate_policies*/
-/*
-    char dns[128] = {0}, domain[16] = {0};
-    sscanf(host, "%*[^.].%[^.]", domain);
-    snprintf(dns, 127, "DNS:%s.com, DNS:*.%s.com, DNS:www.%s.cn", domain, domain, domain);
-    add_ext(cacrt, x, NID_subject_alt_name, dns);
-*/
-#endif
-    if(!X509_sign(x, cakey, EVP_sha256())){
-        goto err;
-    }
-    return x;
-
-err:
-    if(x)
-        X509_free(x);
-    if(pk)
-        EVP_PKEY_free(pk);
-    return NULL;
-}
-
 char *x509_get_sn(X509 *x509)
 {
 	ASN1_INTEGER *asn1_i = NULL;
@@ -993,8 +969,8 @@ static int x509_online_append(struct x509_object_ctx *def, struct request_t *req
 {
     X509* x509 = NULL;
     int is_valid = request->is_valid; int keyring_id = request->keyring_id;
-    int expire_time = 0, bits = 0; char *crlurl = NULL;
-    char *serial = NULL;
+    int expire_time = 0; char *crlurl = NULL;
+    char *serial = NULL, *public_algo = NULL;
     X509 *cacrt = NULL; EVP_PKEY *cakey = NULL;
 
     struct config_bucket_t *rte = cert_default_config();
@@ -1046,9 +1022,9 @@ static int x509_online_append(struct x509_object_ctx *def, struct request_t *req
     cakey  = pxy_obj->key;
     expire_time = pxy_obj->expire_time;
     crlurl    = pxy_obj->v3_ctl;
-	bits  = pxy_obj->bits;
+	public_algo = pxy_obj->public_algo;
 modify:
-    x509 = x509_modify_by_cert(cacrt, cakey, request->origin, pkey, &expire_time, crlurl, bits);
+    x509 = x509_modify_by_cert(cacrt, cakey, request->origin, pkey, &expire_time, crlurl, public_algo);
     if (!x509){
         goto finish;
     }
@@ -1080,8 +1056,33 @@ static char readBytes(char *str)
     return c;
 }
 
+static void
+redis_sync_reget_callback(struct request_t *request, struct redisContext *sync)
+{
+	struct evhttp_request *evh_req = request->evh_req;
+	
+	redisReply *reply = (redisReply *)redisCommand(sync, "GET %s", request->rkey);
+	if (NULL == reply)
+	{
+		goto free;
+	}
+	switch (readBytes(reply->str))
+	{
+		case '+' :
+		    evhttp_socket_send(evh_req, reply->str);
+            break;
+		default  :
+			evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
+			break;
+	}
+free:
+	freeReplyObject(reply);
+	request_destroy(request);
+	return;
+}
+
 static int
-rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request, char *odata, int expire_after)
+rediSyncCommand(redisContext *sync, struct request_t *request, char *odata, int expire_after)
 {
     int xret = -1;
     redisReply *reply;
@@ -1096,20 +1097,24 @@ rediSyncCommand(redisAsyncContext *cl_ctx, struct request_t *request, char *odat
     switch (readBytes(reply->str)) {
         case '+' :
             mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Writing data(%s) to redis successfully", request->rkey);
-            FS_internal_operate(SGstats.handle, thread->column_ids, SGstats.line_ids[2], FS_OP_ADD, 1);
+            FS_internal_operate(SGstats.handle, thread->column_ids, SGstats.line_ids[HTTP_ACTION_SIGN], FS_OP_ADD, 1);
 
             evhttp_socket_send(evh_req, request->odata);
             goto free;
         case '$' :
             mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Writing data(%s) to redis failed", request->rkey);
-            FS_internal_operate(SGstats.handle, thread->column_ids, SGstats.line_ids[1], FS_OP_ADD, 1);
-
-            redisAsyncCommand(cl_ctx, redis_reget_callback, request, "GET %s", request->rkey);
+            FS_internal_operate(SGstats.handle, thread->column_ids, SGstats.line_ids[HTTP_ACTION_SQL], FS_OP_ADD, 1);
+			struct config_bucket_t *config = cert_default_config();
+			if (config->mode){
+            	redisAsyncCommand(thread->cl_ctx, redis_reget_callback, request, "GET %s", request->rkey);
+			}else{
+				redis_sync_reget_callback(request, sync);
+			}
             freeReplyObject(reply);
             goto finish;
         default  :
             mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Read redis data(%s) return code failed", request->rkey);
-            evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
+			evhttp_socket_send_error(request->evh_req, thread->column_ids, HTTP_NOTFOUND);
             goto free;
     }
     xret = 0;
@@ -1188,7 +1193,7 @@ web_json_table_add(char *privatekey, char *sign,
 }
 
 static int
-redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
+redis_clnt_pdu_send(struct request_t *request)
 {
 #define MAX_CHAIN_LEN 6
     int xret = -1, i = 0;
@@ -1200,11 +1205,11 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
 
     expire_time = x509_online_append(&info->def, request, &root, &sign, pkey, &stack_ca);
     if (sign == NULL && pkey[0] == '\0'){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to sign certificate");
-        evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to sign certificate");	
+		evhttp_socket_send_error(request->evh_req, info->column_ids, HTTP_NOTFOUND);
         goto finish;
     }
-    FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[3], FS_OP_SET, info->diffTime);
+    FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[HTTP_ACTION_TIME], FS_OP_SET, info->diffTime);
     FS_internal_operate(SGstats.handle, info->field_ids, 0, FS_OP_ADD, 1);
 
     char *single = NULL;
@@ -1223,15 +1228,15 @@ redis_clnt_pdu_send(struct request_t *request, redisAsyncContext *c)
     }
     web_json_table_add(pkey, sign, chain, &request->odata);
 
-    if (NULL == c){
+    if (info->sync == NULL){
         struct evhttp_request *evh_req = request->evh_req;
-        FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[2], FS_OP_ADD, 1);
+        FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[HTTP_ACTION_SIGN], FS_OP_ADD, 1);
         evhttp_socket_send(evh_req, request->odata);
         request_destroy(request);
         xret = 0;
         goto finish;
     }
-    xret = rediSyncCommand(c, request, request->odata, expire_time);
+    xret = rediSyncCommand(info->sync, request, request->odata, expire_time);
     if (xret < 0){
         goto finish;
     }
@@ -1248,11 +1253,10 @@ redis_clnt_send(struct request_t *request, redisReply *reply)
     cert_thread_ctx *thread        = threads + request->thread_id;
 
     if (!reply && !reply->str){
-        evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
+		evhttp_socket_send_error(request->evh_req, thread->column_ids, HTTP_NOTFOUND);
         goto finish;
     }
-
-    FS_internal_operate(SGstats.handle, thread->column_ids, SGstats.line_ids[1], FS_OP_ADD, 1);
+    FS_internal_operate(SGstats.handle, thread->column_ids, SGstats.line_ids[HTTP_ACTION_SQL], FS_OP_ADD, 1);
 
     FS_internal_operate(SGstats.handle, thread->field_ids, 0, FS_OP_ADD, 1);
 
@@ -1265,7 +1269,7 @@ finish:
     return xret;
 }
 
-void redis_get_callback(redisAsyncContext *c, void *r, void *privdata)
+void redis_get_callback(redisAsyncContext __attribute__((__unused__))*c, void *r, void *privdata)
 {
     int __attribute__((__unused__))xret = -1;
 
@@ -1282,7 +1286,7 @@ void redis_get_callback(redisAsyncContext *c, void *r, void *privdata)
         case REDIS_REPLY_NIL:
             mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Generating certificate information");
 
-            xret = redis_clnt_pdu_send(request, c);
+            xret = redis_clnt_pdu_send(request);
             break;
         default:
             break;
@@ -1461,23 +1465,58 @@ finish:
     return 0;
 }
 
+static int
+redis_sync_command(struct request_t *request,  struct redisContext __attribute__((__unused__))*c)
+{	
+	int xret = -1;
+	redisReply *reply;
+	
+    cert_thread_ctx *thread_ctx = threads + request->thread_id;
+
+	reply = (redisReply *)redisCommand(thread_ctx->sync, "GET %s", request->rkey);
+	if (NULL == reply)
+		goto free;
+
+	switch (readBytes(reply->str)) {
+		case '+' :
+			mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Sends the certificate information to the requestor");
+		 	xret = redis_clnt_send(request, reply);
+            break;
+		case '$' :
+			mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Generating certificate information");
+            xret = redis_clnt_pdu_send(request);
+			goto finish;
+		default  :
+			mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Read redis data(%s) return code failed", request->rkey);
+			evhttp_send_error(request->evh_req, HTTP_NOTFOUND, 0);
+			goto free;
+	}
+	xret = 0;
+
+free:
+	freeReplyObject(reply);
+
+finish:
+	return xret;
+}
+
 void http_get_cb(struct evhttp_request *evh_req, void *arg)
 {
     int xret = -1;
-    cert_thread_ctx *info = (cert_thread_ctx *)arg;
+    cert_thread_ctx *info = (cert_thread_ctx *)arg;	
+    struct config_bucket_t *config = cert_default_config();
 
 	if (evhttp_request_get_command(evh_req) != EVHTTP_REQ_POST) {
 		mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "FAILED (post type)");
 		goto error;
 	}
-	
 	struct request_t *request = (struct request_t *) kmalloc (sizeof(struct request_t), MPF_CLR, -1);
 	request->keyring_id = 0;
 	request->thread_id  = info->id;
 	request->evh_req    = evh_req;
 
 	http_decode_uri(evh_req, request);
-	mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "[Thread %d]Received request for uri, kering_id:%d, sni:%s, valid:%d",
+	mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "[Thread %d]Received request for uri, kering_id:%d, sni:%s, valid:%d",
                      request->thread_id, request->keyring_id, request->sni, request->is_valid);
 
 	char *input = NULL; ssize_t inputlen=0;	
@@ -1500,26 +1539,32 @@ void http_get_cb(struct evhttp_request *evh_req, void *arg)
         goto error;
     }
     mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Redis key is %s", request->rkey);	
-	FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[0], FS_OP_ADD, 1);
+	FS_internal_operate(SGstats.handle, info->column_ids, SGstats.line_ids[HTTP_ACTION_REQ], FS_OP_ADD, 1);
 
 	/* we want to know if this connection closes on us */
 	evhttp_connection_set_closecb(evhttp_request_get_connection(evh_req), evhttp_socket_close_cb, NULL);
-
-    if (info->cl_ctx->err != 0){
-        xret = redis_clnt_pdu_send(request, NULL);
+    if (info->sync == NULL){
+        xret = redis_clnt_pdu_send(request);
         if (xret < 0)
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Local sign certificate failed");
         goto free;
     }else{
-        xret = redisAsyncCommand(info->cl_ctx, redis_get_callback, request, "GET %s", request->rkey);
-        if (xret < 0)
-            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get information from redis server");
+		if (config->mode)
+		{
+			xret = redisAsyncCommand(info->cl_ctx, redis_get_callback, request, "GET %s", request->rkey);
+			if (xret < 0)
+				mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get information from redis server");
+		}else{
+			xret = redis_sync_command(request, info->sync);
+			if (xret < 0)
+				mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get information from redis server");
+		}
     }
 free:
     goto finish;
 
 error:
-    evhttp_send_error(evh_req, HTTP_BADREQUEST, 0);
+	evhttp_socket_send_error(evh_req, info->column_ids, HTTP_BADREQUEST);
 finish:
     return;
 }
@@ -1554,11 +1599,13 @@ task_private_init(struct event_base *base, cert_thread_ctx *info)
     struct config_bucket_t *config = cert_default_config();
 
     /* Initialize the redis connection*/
-    xret = redis_rsync_init(base, &info->cl_ctx);
-    if (xret < 0 || !info->cl_ctx){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Initialize the redis connection is failure");
-    }
-
+	if (config->mode){
+		xret = redis_rsync_init(base, &info->cl_ctx);
+		if (xret < 0 || !info->cl_ctx){
+		    mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Initialize the redis connection is failure");
+		}
+	}
+	
     xret = redis_sync_init(&info->sync);
     if (xret < 0 || !info->sync){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Initialize the sync redis connection is failure");
@@ -1617,6 +1664,8 @@ static void *pthread_worker_libevent(void *arg)
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Bound(%p) to port %d - Awaiting connections ... ", bound,
                         cert_default_config()->addr_t.e_port);
 	}
+	mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Work thread %u is run...", thread_ctx->id);
+	
 	event_base_dispatch(base);
 error:
     event_base_free(base);
@@ -1690,10 +1739,8 @@ redis_link_detection(uint32_t __attribute__((__unused__)) uid,
     unsigned int thread_nu = cert_default_config()->thread_nu;
     for (tid = 0; tid < (int)thread_nu; tid++) {
         info  = threads + tid;
-        if(info->cl_ctx->err != 0){
-            if (info->sync)
-                redisFree(info->sync);
-
+        if(info->sync == NULL){
+			redisFree(info->sync);
             xret = redis_sync_init(&info->sync);
             if (xret < 0 || !info->sync){
                 mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect sync redis failed", tid);
@@ -1702,12 +1749,15 @@ redis_link_detection(uint32_t __attribute__((__unused__)) uid,
                 mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect sync redis success", tid);
             }
 
-            xret = redis_rsync_init(info->base, &info->cl_ctx);
-            if (xret < 0 || !info->cl_ctx){
-                mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect rsync redis failed", tid);
-            }else{
-                mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect rsync redis success", tid);
-            }
+			if(cert_default_config()->mode)
+			{
+				 xret = redis_rsync_init(info->base, &info->cl_ctx);
+				if (xret < 0 || !info->cl_ctx){
+				    mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect rsync redis failed", tid);
+				}else{
+				    mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect rsync redis success", tid);
+				}
+			}
         }
     }
 }
@@ -1838,19 +1888,21 @@ static int mesa_fiel_stat_init()
 	MESA_internal_set_para(SGstats.handle, CREATE_THREAD, 1);
 	MESA_internal_set_para(SGstats.handle, STAT_CYCLE, 3);
 
-    snprintf(buff,sizeof(buff),"%s", "Req");
-    SGstats.line_ids[0] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
-    snprintf(buff,sizeof(buff),"%s", "DB");
-    SGstats.line_ids[1] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
-    snprintf(buff,sizeof(buff),"%s", "Local");
-    SGstats.line_ids[2] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
+    snprintf(buff,sizeof(buff),"%s", "REQ");
+    SGstats.line_ids[HTTP_ACTION_REQ] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
+    snprintf(buff,sizeof(buff),"%s", "SQL");
+    SGstats.line_ids[HTTP_ACTION_SQL] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
+    snprintf(buff,sizeof(buff),"%s", "SIGN");
+    SGstats.line_ids[HTTP_ACTION_SIGN] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
+    snprintf(buff,sizeof(buff),"%s", "ERR");	
+    SGstats.line_ids[HTTP_ACTION_ERR] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
     snprintf(buff,sizeof(buff),"%s", "take-time");
-    SGstats.line_ids[3] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
+    SGstats.line_ids[HTTP_ACTION_TIME] = FS_internal_register(SGstats.handle, FS_STYLE_COLUMN, FS_CALC_CURRENT, buff);
 
-	MESA_internal_set_para(SGstats.handle, ID_INVISBLE, SGstats.line_ids[3]);
+	MESA_internal_set_para(SGstats.handle, ID_INVISBLE, SGstats.line_ids[HTTP_ACTION_TIME]);
     snprintf(buff,sizeof(buff),"Cert/Nsec");
-    FS_internal_register_ratio(SGstats.handle, SGstats.line_ids[3],
-                               SGstats.line_ids[2], 1,
+    FS_internal_register_ratio(SGstats.handle, SGstats.line_ids[HTTP_ACTION_TIME],
+                               SGstats.line_ids[HTTP_ACTION_SIGN], 1,
                                FS_STYLE_COLUMN, FS_CALC_CURRENT,
                                buff);
 	FS_internal_start(SGstats.handle);
@@ -1895,10 +1947,10 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
     memset(pxy_obj, 0, sizeof(struct pxy_obj_keyring));
 	atomic64_set(&pxy_obj->ref_cnt, 1);
 
-	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d\t%d", &pxy_obj->keyring_id, profile_name,
-		       pxy_obj->keyring_type, private_file, public_file, &pxy_obj->expire_time, pxy_obj->public_algo,
-		       pxy_obj->v3_ctl, &pxy_obj->bits, &pxy_obj->is_valid);
-	if(ret!=10)
+	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%s\t%lu\t%s\t%d", &pxy_obj->keyring_id, profile_name,
+			   pxy_obj->keyring_type, private_file, public_file, pxy_obj->public_algo, &pxy_obj->expire_time, 
+			   pxy_obj->v3_ctl, &pxy_obj->is_valid);
+	if(ret!=9)
 	{
         kfree(&pxy_obj);
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore parse config failed: %s", table_line);

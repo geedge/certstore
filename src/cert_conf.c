@@ -42,6 +42,11 @@ static int load_system_config(char *config)
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the number of running threads failed");
     }
 
+	xret = MESA_load_profile_int_def(config, "CONFIG", "mode", &(rte->mode), 0);
+	if (xret < 0){
+		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the number of run mode failed");
+	}
+
     xret = MESA_load_profile_uint_nodef(config, "CONFIG", "expire_after", &(rte->expire_after));
     if (xret < 0){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the number of valid time failed");
@@ -54,7 +59,6 @@ static int load_system_config(char *config)
         goto finish;
 
     }
-
     xret = MESA_load_profile_uint_nodef(config, "CONFIG", "local_debug", &(rte->local_debug));
     if (xret < 0){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the number of local_debug failed");
