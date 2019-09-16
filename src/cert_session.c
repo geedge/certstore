@@ -1947,12 +1947,12 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
     memset(pxy_obj, 0, sizeof(struct pxy_obj_keyring));
 	atomic64_set(&pxy_obj->ref_cnt, 1);
 
-	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%s\t%lu\t%s\t%d", &pxy_obj->keyring_id, profile_name,
-			   pxy_obj->keyring_type, private_file, public_file, pxy_obj->public_algo, &pxy_obj->expire_time, 
-			   pxy_obj->v3_ctl, &pxy_obj->is_valid);
+	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d", &pxy_obj->keyring_id, profile_name,
+		       pxy_obj->keyring_type, private_file, public_file, &pxy_obj->expire_time, pxy_obj->public_algo,  
+		       pxy_obj->v3_ctl, &pxy_obj->is_valid);
 	if(ret!=9)
 	{
-        kfree(&pxy_obj);
+        kfree(pxy_obj);
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore parse config failed: %s", table_line);
         goto finish;
 	}
