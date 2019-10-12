@@ -1215,7 +1215,7 @@ redis_clnt_pdu_send(struct request_t *request)
     char *single = NULL;
     char *chain[MAX_CHAIN_LEN] = {0};
     if (stack_ca){
-        for (i = 0; i < sk_X509_num(stack_ca); i++){
+        for (i = 0; i < sk_X509_num(stack_ca) - 1; i++){
             x509_get_msg_from_ca(sk_X509_value(stack_ca, i), &single);
             chain[i] = single;
         }
