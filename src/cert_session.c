@@ -317,7 +317,6 @@ X509* x509_get_root_ca(char *file, STACK_OF(X509) **stack_ca)
 		}
 		sk_X509_push(stack_x509, x);
 		x509_cnt++;
-		//X509_free(x);
 	}		
 	if (x509_cnt >= 1)
         *stack_ca = stack_x509;
@@ -949,6 +948,8 @@ long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
             X509_free(pxy_obj->root);
         if (pxy_obj->key)
             EVP_PKEY_free(pxy_obj->key);
+		if (pxy_obj->stack_ca)
+			sk_X509_free(pxy_obj->stack_ca);
         free(pxy_obj);
         pxy_obj = NULL;
         *ad=NULL;
