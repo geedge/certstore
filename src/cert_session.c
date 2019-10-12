@@ -127,16 +127,16 @@ finish:
 static int x509_public_str2idx(const char *public_algo)
 {
 	int bits = 1024;
-
-	if (strcasestr(public_algo, "1024") != NULL)
+	
+	if (public_algo != NULL && strcasestr(public_algo, "1024") != NULL)
 	{
 		bits = 1024;
 	}
-	if (strcasestr(public_algo, "2048") != NULL)
+	if (public_algo != NULL && strcasestr(public_algo, "2048") != NULL)
 	{
 		bits = 2048;
 	}
-	if (strcasestr(public_algo, "4096") != NULL)
+	if (public_algo != NULL && strcasestr(public_algo, "4096") != NULL)
 	{
 		bits = 4096;
 	}
@@ -249,6 +249,84 @@ cert_base_load_x509 (BIO * in_bio)
     return PEM_read_bio_X509 (in_bio, NULL, NULL, NULL);
 }
 
+int x509_get_last_ca(char *file, X509 *cx509)
+{
+	int last = 0;
+	X509 *x = NULL;
+	BIO *bio = NULL;
+
+	if ((bio = BIO_new(BIO_s_file())) == NULL) 
+	{
+        goto finish;
+    }
+    if (BIO_read_filename(bio, file) <= 0) 
+	{
+        goto finish;
+    }
+	while(NULL!=(x=PEM_read_bio_X509_AUX(bio, NULL, NULL, NULL)))
+	{
+		if (0 == X509_NAME_cmp(X509_get_issuer_name(x), X509_get_subject_name(cx509)))
+		{
+			last = 1;
+			X509_free(x);
+			break;
+		};
+		X509_free(x);
+	}
+	BIO_free (bio);
+finish:
+	return last;
+}
+
+X509* x509_get_root_ca(char *file, STACK_OF(X509) **stack_ca)
+{	
+	int x509_cnt = 0;
+	X509 *x = NULL, *end = NULL;
+	BIO *bio = NULL;
+	STACK_OF(X509) *stack_x509 = NULL;
+	
+	if(!file){
+		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Input cert file is empty.");
+		goto finish;
+	}
+
+	if ((bio = BIO_new(BIO_s_file())) == NULL) {
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Bio malloc failed.");
+        goto finish;
+    }
+    if (BIO_read_filename(bio, file) <= 0) {
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Error opening %s", file);
+        goto finish;
+    }
+	if ((stack_x509 = sk_X509_new_null()) == NULL)
+    {
+        X509err(X509_F_X509_VERIFY_CERT, ERR_R_MALLOC_FAILURE);
+        goto finish;
+    }
+	
+	while(NULL!=(x=PEM_read_bio_X509_AUX(bio, NULL, NULL, NULL))){	
+		if (0 == X509_NAME_cmp(X509_get_issuer_name(x), X509_get_subject_name(x))){
+			/*This is root ca**/
+			continue;
+			X509_free(x);
+		};
+		/*This is last ca*/
+		if (x509_get_last_ca(file, x) == 0){			
+			end = x;
+			continue;
+		}
+		sk_X509_push(stack_x509, x);
+		x509_cnt++;
+		//X509_free(x);
+	}		
+	if (x509_cnt >= 1)
+        *stack_ca = stack_x509;
+	
+	BIO_free (bio);
+finish:
+	return end;
+}
+
 static X509 *
 cert_load_x509(char *file, STACK_OF(X509) **stack_ca)
 {
@@ -259,7 +337,6 @@ cert_load_x509(char *file, STACK_OF(X509) **stack_ca)
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Input cert file is empty.");
         goto finish;
     }
-
     if ((in_bio = BIO_new(BIO_s_file())) == NULL) {
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Bio malloc failed.");
         goto finish;
@@ -720,7 +797,7 @@ void x509_get_msg_from_ca(X509 *x509, char **root)
 {
 	BIO *bp = NULL;
     int len = 0;
-
+	
     if ( (bp=BIO_new(BIO_s_mem())) == NULL){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "unable to create BIO for output");
         goto finish;
@@ -1215,7 +1292,7 @@ redis_clnt_pdu_send(struct request_t *request)
     char *single = NULL;
     char *chain[MAX_CHAIN_LEN] = {0};
     if (stack_ca){
-        for (i = 0; i < sk_X509_num(stack_ca) - 1; i++){
+        for (i = 0; i < sk_X509_num(stack_ca); i++){
             x509_get_msg_from_ca(sk_X509_value(stack_ca, i), &single);
             chain[i] = single;
         }
@@ -1958,7 +2035,7 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
 	}
 
     /*Load PUBLICKEY***/
-    if ((pxy_obj->root = cert_load_x509(public_file, &pxy_obj->stack_ca)) == NULL ){
+    if ((pxy_obj->root = x509_get_root_ca(public_file, &pxy_obj->stack_ca)) == NULL ){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "initialize the x509 publickey failed, the keyring id is %d",
                          pxy_obj->keyring_id);
 		goto finish;
