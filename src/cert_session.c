@@ -281,9 +281,9 @@ finish:
 X509* x509_get_root_ca(char *file, STACK_OF(X509) **stack_ca)
 {	
 	int x509_cnt = 0;
-	X509 *x = NULL, *end = NULL;
 	BIO *bio = NULL;
-	STACK_OF(X509) *stack_x509 = NULL;
+	STACK_OF(X509) *stack_x509 = NULL;	
+	X509 *x = NULL, *node = NULL, *root = NULL;
 	
 	if(!file){
 		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Input cert file is empty.");
@@ -307,12 +307,12 @@ X509* x509_get_root_ca(char *file, STACK_OF(X509) **stack_ca)
 	while(NULL!=(x=PEM_read_bio_X509_AUX(bio, NULL, NULL, NULL))){	
 		if (0 == X509_NAME_cmp(X509_get_issuer_name(x), X509_get_subject_name(x))){
 			/*This is root ca**/
+			root = x;
 			continue;
-			X509_free(x);
 		};
 		/*This is last ca*/
 		if (x509_get_last_ca(file, x) == 0){			
-			end = x;
+			node = x;
 			continue;
 		}
 		sk_X509_push(stack_x509, x);
@@ -320,10 +320,13 @@ X509* x509_get_root_ca(char *file, STACK_OF(X509) **stack_ca)
 	}		
 	if (x509_cnt >= 1)
         *stack_ca = stack_x509;
-	
+	if (node != NULL)
+		X509_free(root);
+	else
+		node = root;
 	BIO_free (bio);
 finish:
-	return end;
+	return node;
 }
 
 static X509 *
