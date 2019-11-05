@@ -45,7 +45,7 @@ endif()
 
 add_custom_target("install-program" COMMAND ${CMAKE_COMMAND} ARGS -DCOMPONENT=Program -P cmake_install.cmake)
 add_custom_target("install-profile" COMMAND ${CMAKE_COMMAND} ARGS -DCOMPONENT=Profile -P cmake_install.cmake)
-add_custom_target("tarball" COMMAND sh ${CMAKE_SCRIPT_PATH}/tarball.sh ${TARGET_DESCRIBE})
+add_custom_target("tarball" COMMAND sh ${CMAKE_SCRIPT_PATH}/tarball.sh ${TARGET_VERSION} ${TARGET_DESCRIBE})
 
 enable_testing()
 add_subdirectory(vendor)

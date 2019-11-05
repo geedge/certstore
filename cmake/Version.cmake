@@ -15,7 +15,6 @@ execute_process(COMMAND ${__AUTORESIVISION} -t cmake -o ${__VERSION_CACHE} OUTPU
 include(${__VERSION_CONFIG})
 
 # extract major, minor, patch version from git tag
-message(STATUS "Before, Version: ${VCS_TAG}")
 string(REGEX REPLACE "^v([0-9]+)\\..*" "\\1" TARGET_MAJOR "${VCS_TAG}")
 string(REGEX REPLACE "^v[0-9]+\\.([0-9]+).*" "\\1" TARGET_MINOR "${VCS_TAG}")
 string(REGEX REPLACE "^v[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1" TARGET_PATCH "${VCS_TAG}")
