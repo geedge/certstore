@@ -22,7 +22,7 @@
 #define CT_ARRARY_LEN (CT_PATH_MAX/2)
 #define CT_STRING_MAX 1024
 
-struct request_t{
+struct tfe_http_request{
 #define DATALEN 128
     int thread_id;
     int is_valid;
@@ -38,11 +38,12 @@ struct pxy_obj_keyring{
 	int keyring_id;
 	uint64_t expire_time;
 	EVP_PKEY *key;
-    X509 *root;
+    X509 *issuer;
     char keyring_type[CT_ARRARY_LEN];
 	char public_algo[CT_STRING_MAX];
 	char v3_ctl[CT_STRING_MAX];
     char finger[EVP_MAX_MD_SIZE];
+	int is_send;
 	int is_valid;	
 	atomic64_t ref_cnt;
     STACK_OF(X509) *stack_ca;

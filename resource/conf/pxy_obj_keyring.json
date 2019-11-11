@@ -73,14 +73,18 @@
         {
             "table_name": "PXY_PROFILE_KEYRING",
 			  "table_content": [
-                "0\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-v3-untrust-ca.pem\t/home/fengweihao/tool/test_cert/root/tango-ca-v3-untrust-ca.pem\t0\trsa1024\tNULL\t1\t",
-				"1\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem\t//home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem\t0\trsa1024\tNULL\t1\t",
+                "0\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-v3-untrust-ca.pem\t/home/fengweihao/tool/test_cert/root/tango-ca-v3-untrust-ca.pem\t0\trsa1024\tNULL\t1\t1\t",
+				"11\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem\t//home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem\t0\trsa1024\tNULL\t0\t1\t",
 				
-				"2\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-key.pem\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-cer.pem\t24\trsa2048\tNULL\t1\t",
-				"3\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-key.pem\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-cer.pem\t30\trsa4096\tNULL\t1\t",
-				"4\tname_01\troot\t/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-key.pem\t/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-cer.pem\t30\trsa4096\tNULL\t1\t",
-				"5\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/ca01-mle-key.pem\t/home/fengweihao/tool/test_cert/Intermediate/ca01-mle.pem\t30\trsa4096\tNULL\t1\t",
-				"6\tname_01\tend-entity\t/home/fengweihao/tool/test_cert/end-entity/tang-ca-v3-www.bing.com-key.pem\t/home/fengweihao/tool/test_cert/end-entity/tang-ca-v3-www.bing.com-cer.pem\t30\trsa4096\tNULL\t1\t"
+				"1\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-key.pem\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-cer.pem\t24\trsa2048\tNULL\t0\t1\t",
+				"3\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-key.pem\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-cer.pem\t30\trsa4096\tNULL\t1\t1\t",
+				"9\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-key.pem\t/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-cer.pem\t30\trsa1024\tNULL\t1\t1\t",
+				"8\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-key.pem\t/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-ca-l1-cert.pem\t30\trsa1024\tNULL\t1\t1\t",
+				"12\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/Tang-Ca-IIS-v2.key\t/home/fengweihao/tool/test_cert/Intermediate/Tang-Ca-IIS-v2-v2-v1-ca.cer\t30\trsa1024\tNULL\t0\t1\t",
+				"13\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/Tang-Ca-IIS-v2.key\t/home/fengweihao/tool/test_cert/Intermediate/Tang-Ca-IIS-v2-ca-v1-v2.cer\t30\trsa1024\tNULL\t0\t1\t",
+				"4\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/Tang-Ca-IIS-v2.key\t/home/fengweihao/tool/test_cert/Intermediate/Tang-Ca-IIS-v2-v1-ca-v2.cer\t30\trsa1024\tNULL\t0\t1\t",
+				"5\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/ca01-mle-key.pem\t/home/fengweihao/tool/test_cert/Intermediate/ca01-mle.pem\t30\trsa4096\tNULL\t1\t1\t",
+				"10\tname_01\tend-entity\t/home/fengweihao/tool/test_cert/end-entity/tang-ca-v3-www.bing.com-key.pem\t/home/fengweihao/tool/test_cert/end-entity/tang-ca-v3-www.bing.com-cer.pem\t30\trsa4096\tNULL\t0\t1\t"
             ]
         }
     ]

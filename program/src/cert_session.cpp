@@ -233,12 +233,12 @@ finish:
 	return last;
 }
 
-X509* x509_get_root_ca(char *file, STACK_OF(X509) **stack_ca)
+X509* x509_get_root_ca(char *file, int is_send, char *keyring_type, STACK_OF(X509) **stack_ca)
 {	
 	int x509_cnt = 0;
 	BIO *bio = NULL;
 	STACK_OF(X509) *stack_x509 = NULL;	
-	X509 *x = NULL, *node = NULL, *root = NULL;
+	X509 *certificate = NULL, *issuer = NULL, *caroot = NULL;
 	
 	if(!file){
 		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Input cert file is empty.");
@@ -259,29 +259,41 @@ X509* x509_get_root_ca(char *file, STACK_OF(X509) **stack_ca)
         goto finish;
     }
 	
-	while(NULL!=(x=PEM_read_bio_X509_AUX(bio, NULL, NULL, NULL))){	
-		if (0 == X509_NAME_cmp(X509_get_issuer_name(x), X509_get_subject_name(x))){
-			/*This is root ca**/
-			root = x;
-			continue;
+	while(NULL!=(certificate=PEM_read_bio_X509_AUX(bio, NULL, NULL, NULL)))
+	{	
+		if (0 == X509_NAME_cmp(X509_get_issuer_name(certificate), X509_get_subject_name(certificate)))
+		{
+			/*This is caroot ca**/
+			caroot = certificate;
+			if (is_send == 0)
+				continue;
 		};
 		/*This is last ca*/
-		if (x509_get_last_ca(file, x) == 0){			
-			node = x;
-			continue;
+		if (x509_get_last_ca(file, certificate) == 0)
+		{			
+			issuer = certificate;
+			if (strcasecmp(keyring_type, "end-entity") == 0)
+			{
+				continue;
+			}
 		}
-		sk_X509_push(stack_x509, x);
+		sk_X509_push(stack_x509, certificate);
 		x509_cnt++;
 	}		
 	if (x509_cnt >= 1)
         *stack_ca = stack_x509;
-	if (node != NULL)
-		X509_free(root);
+	if (issuer != NULL)
+	{
+		if (is_send == 0)
+			X509_free(caroot);
+	}
 	else
-		node = root;
+	{
+		issuer = caroot;
+	}
 	BIO_free (bio);
 finish:
-	return node;
+	return issuer;
 }
 
 EVP_PKEY * cert_base_key_x509 (BIO * bio, int iFormat, const char *strPwd)
@@ -336,7 +348,7 @@ static void key_ring_free(void *data)
     struct pxy_obj_keyring *pxy_obj = NULL;
     pxy_obj = (struct pxy_obj_keyring *)data;
 
-    X509_free(pxy_obj->root);
+    X509_free(pxy_obj->issuer);
     EVP_PKEY_free(pxy_obj->key);
 }
 
@@ -738,7 +750,7 @@ finish:
 	return x509;
 }
 
-void request_destroy(struct request_t *request)
+void request_destroy(struct tfe_http_request *request)
 {
 	if (request->odata)
 	{
@@ -816,7 +828,7 @@ redis_reget_callback(redisAsyncContext __attribute__((__unused__))*cl_ctx,
 {
     redisReply *reply              = (redisReply*)r;
 
-    struct request_t *request      = (struct request_t *)privdata;
+    struct tfe_http_request *request      = (struct tfe_http_request *)privdata;
 
     struct evhttp_request *evh_req = request->evh_req;
     evhttp_socket_send(evh_req, reply->str);
@@ -841,8 +853,8 @@ long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
 			mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "del keyringid %d failed", pxy_obj->keyring_id);
 		}
 #endif
-        if (pxy_obj->root)
-            X509_free(pxy_obj->root);
+        if (pxy_obj->issuer)
+            X509_free(pxy_obj->issuer);
         if (pxy_obj->key)
             EVP_PKEY_free(pxy_obj->key);
         free(pxy_obj);
@@ -936,14 +948,12 @@ static struct pxy_obj_keyring* get_obj_for_id(int keyring_id)
 	return pxy_obj;
 }
 
-static int x509_online_append(struct x509_object_ctx *def, struct request_t *request,
-                              		char **root, char **sign, char *pkey,
-                              		STACK_OF(X509) **stack_ca)
+static int x509_online_append(struct x509_object_ctx *def, struct tfe_http_request *request, char **sign, char *pkey,
+                              STACK_OF(X509) **stack_ca)
 {
     X509* x509 = NULL;
     int is_valid = request->is_valid; int keyring_id = request->keyring_id;
-    int expire_time = 0; char *crlurl = NULL;
-    char *serial = NULL, *public_algo = NULL;
+    int expire_time = 0; char *serial = NULL;
     X509 *cacrt = NULL; EVP_PKEY *cakey = NULL;
 
     struct config_bucket_t *rte = cert_default_config();
@@ -956,14 +966,8 @@ static int x509_online_append(struct x509_object_ctx *def, struct request_t *req
     {
         if (!rte->local_debug)
         {
-            if (1==is_valid)
-            {
-                pxy_obj = get_obj_for_id(1);
-            }
-            if (0==is_valid)
-            {
-                pxy_obj = get_obj_for_id(0);
-            }
+            if (1==is_valid)  pxy_obj = get_obj_for_id(1);
+            if (0==is_valid)  pxy_obj = get_obj_for_id(0);
             assert(pxy_obj!=NULL);
             mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Certificate issued by table id %d", keyring_id);
         }
@@ -978,26 +982,23 @@ static int x509_online_append(struct x509_object_ctx *def, struct request_t *req
     }
     if (!STRCMP(pxy_obj->keyring_type, "end-entity"))
     {
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate(%d) type is an entity certificate",
-                         keyring_id);
-        *stack_ca = pxy_obj->stack_ca;
-        x509_get_msg_from_ca(pxy_obj->root, sign);
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate(%d) type is an entity",keyring_id);
+		*stack_ca = pxy_obj->stack_ca;
+        x509_get_msg_from_ca(pxy_obj->issuer, sign);
         x509_get_private_key(pxy_obj->key, pkey);
         goto finish;
     }
     if (!STRCMP(pxy_obj->keyring_type, "intermediate"))
     {
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate(%d) type is intermediate, chain address %p",
-                         keyring_id, pxy_obj->stack_ca);
-        *stack_ca = pxy_obj->stack_ca;
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate(%d) type is intermediate", keyring_id);
+        
     }
-    cacrt = pxy_obj->root;
+    cacrt = pxy_obj->issuer;
     cakey  = pxy_obj->key;
     expire_time = pxy_obj->expire_time;
-    crlurl    = pxy_obj->v3_ctl;
-	public_algo = pxy_obj->public_algo;
+	*stack_ca = pxy_obj->stack_ca;
 modify:
-    x509 = ssl_x509_forge(cacrt, cakey, request->origin, pkey, &expire_time, crlurl, public_algo);
+    x509 = ssl_x509_forge(cacrt, cakey, request->origin, pkey, &expire_time, pxy_obj->v3_ctl, pxy_obj->public_algo);
     if (!x509){
         goto finish;
     }
@@ -1006,8 +1007,7 @@ modify:
     OPENSSL_free(serial);
 
     x509_get_msg_from_ca(x509, sign);
-    x509_get_msg_from_ca(cacrt, root);
-
+	
     if (request->origin)
         X509_free(request->origin);
     X509_free(x509);
@@ -1019,7 +1019,7 @@ finish:
 
 static char readBytes(char *str)
 {
-    char c;
+    char c = '+';
 
     if (str && STRCMP(str, "OK") == 0)
         c = '+';
@@ -1030,7 +1030,7 @@ static char readBytes(char *str)
 }
 
 static void
-redis_sync_reget_callback(struct request_t *request, struct redisContext *sync)
+redis_sync_reget_callback(struct tfe_http_request *request, struct redisContext *sync)
 {
 	struct evhttp_request *evh_req = request->evh_req;
 	
@@ -1055,7 +1055,7 @@ free:
 }
 
 static int
-rediSyncCommand(redisContext *sync, struct request_t *request, char *odata, int expire_after)
+rediSyncCommand(redisContext *sync, struct tfe_http_request *request, char *odata, int expire_after)
 {
     int xret = -1;
     redisReply *reply;
@@ -1138,16 +1138,14 @@ json_data_rebuild(const char *data,
     return 0;
 }
 
-static int
-web_json_table_add(char *privatekey, char *sign,
-                   char **chain, char **data)
+static int web_json_table_add(char *privatekey, char *sign, char **digital_certificates, char **data)
 {
     int i = 0;
     size_t osize = 0;
     const char *jstr = NULL;
     struct json_object *outline = json_object_new_object();
 
-    json_object_object_add(outline, "CERTIFICATE_CHAIN", web_json_record_array_add_string(chain));
+    json_object_object_add(outline, "CERTIFICATE_CHAIN", web_json_record_array_add_string(digital_certificates));
 	json_object_object_add(outline, "PRIVATE_KEY", json_object_new_string(privatekey));
     json_object_object_add(outline, "CERTIFICATE", json_object_new_string(sign));
 
@@ -1159,23 +1157,22 @@ web_json_table_add(char *privatekey, char *sign,
 
     kfree(sign);
     for (i = 0; i < 6; i ++){
-        if (chain[i] != NULL)
-            kfree(chain[i]);
+        if (digital_certificates[i] != NULL)
+            kfree(digital_certificates[i]);
     }
     return 0;
 }
 
 static int
-redis_clnt_pdu_send(struct request_t *request)
+redis_clnt_pdu_send(struct tfe_http_request *request)
 {
 #define MAX_CHAIN_LEN 6
     int xret = -1, i = 0;
     STACK_OF(X509) *stack_ca = NULL;
     x509_forge_thread *thread = threads + request->thread_id;
     char *sign = NULL, pkey[SG_DATA_SIZE] = {0};
-    char *root = NULL;
 
-    uint64_t expire_time = x509_online_append(&thread->def, request, &root, &sign, pkey, &stack_ca);
+    uint64_t expire_time = x509_online_append(&thread->def, request, &sign, pkey, &stack_ca);
     if (sign == NULL && pkey[0] == '\0')
 	{
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to sign certificate");	
@@ -1185,25 +1182,16 @@ redis_clnt_pdu_send(struct request_t *request)
     FS_operate(SGstats.handle, thread->column_ids, SGstats.line_ids[HTTP_ACTION_TIME], FS_OP_SET, thread->diffTime);
     FS_operate(SGstats.handle, thread->field_ids, 0, FS_OP_ADD, 1);
 
-    char *single = NULL; char *chain[MAX_CHAIN_LEN] = {0};
+    char *certificate = NULL; char *digital_certificates[MAX_CHAIN_LEN] = {0};
     if (stack_ca)
 	{
         for (i = 0; i < sk_X509_num(stack_ca); i++)
 		{
-            x509_get_msg_from_ca(sk_X509_value(stack_ca, i), &single);
-            chain[i] = single;
-        }
-        if (root != NULL)
-		{
-            chain[i] = root;
-            i++;
+            x509_get_msg_from_ca(sk_X509_value(stack_ca, i), &certificate);
+            digital_certificates[i] = certificate;
         }
     }
-	else
-	{
-        chain[0] = root;
-    }
-    web_json_table_add(pkey, sign, chain, &request->odata);
+    web_json_table_add(pkey, sign, digital_certificates, &request->odata);
 
     if (thread->sync == NULL)
 	{
@@ -1225,7 +1213,7 @@ finish:
 }
 
 static int
-redis_clnt_send(struct request_t *request, redisReply *reply)
+redis_clnt_send(struct tfe_http_request *request, redisReply *reply)
 {
     int xret                       = -1;
 
@@ -1253,7 +1241,7 @@ void redis_get_callback(redisAsyncContext __attribute__((__unused__))*c, void *r
     int __attribute__((__unused__))xret = -1;
 
 	redisReply *reply              = (redisReply*)r;
-    struct request_t *request      = (struct request_t *)privdata;
+    struct tfe_http_request *request      = (struct tfe_http_request *)privdata;
 
     switch(reply->type){
         case REDIS_REPLY_STRING:
@@ -1371,7 +1359,7 @@ void _urldecode(char url[])
     free(res);
 }
 
-static int http_decode_uri(struct evhttp_request *evh_req, struct request_t *request)
+static int http_decode_uri(struct evhttp_request *evh_req, struct tfe_http_request *request)
 {
 	int rv = 0;	
     struct evkeyvalq params;
@@ -1446,7 +1434,7 @@ finish:
 }
 
 static int
-redis_sync_command(struct request_t *request,  struct redisContext __attribute__((__unused__))*c)
+redis_sync_command(struct tfe_http_request *request,  struct redisContext __attribute__((__unused__))*c)
 {	
 	int xret = -1;
 	redisReply *reply;
@@ -1483,7 +1471,7 @@ finish:
 void http_get_cb(struct evhttp_request *evh_req, void *arg)
 {
     int xret = -1;
-	struct request_t *request = NULL;
+	struct tfe_http_request *request = NULL;
 	struct evbuffer * evbuf_body = NULL;
 	char *input = NULL; ssize_t inputlen=0;	
     x509_forge_thread *info = (x509_forge_thread *)arg;	
@@ -1493,7 +1481,7 @@ void http_get_cb(struct evhttp_request *evh_req, void *arg)
 		mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "FAILED (post type)");
 		goto error;
 	}
-	request = (struct request_t *) kmalloc (sizeof(struct request_t), MPF_CLR, -1);
+	request = (struct tfe_http_request *) kmalloc (sizeof(struct tfe_http_request), MPF_CLR, -1);
 	request->keyring_id = 0;
 	request->thread_id  = info->id;
 	request->evh_req    = evh_req;
@@ -2014,10 +2002,10 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
     memset(pxy_obj, 0, sizeof(struct pxy_obj_keyring));
 	atomic64_set(&pxy_obj->ref_cnt, 1);
 
-	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d", &pxy_obj->keyring_id, profile_name,
+	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d\t%d", &pxy_obj->keyring_id, profile_name,
 		       pxy_obj->keyring_type, private_file, public_file, &pxy_obj->expire_time, pxy_obj->public_algo,  
-		       pxy_obj->v3_ctl, &pxy_obj->is_valid);
-	if(ret!=9)
+		       pxy_obj->v3_ctl, &pxy_obj->is_send, &pxy_obj->is_valid);
+	if(ret!=10)
 	{
         kfree(pxy_obj);
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore parse config failed: %s", table_line);
@@ -2025,7 +2013,7 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
 	}
 
     /*Load PUBLICKEY***/
-    if ((pxy_obj->root = x509_get_root_ca(public_file, &pxy_obj->stack_ca)) == NULL ){
+    if ((pxy_obj->issuer = x509_get_root_ca(public_file, pxy_obj->is_send, pxy_obj->keyring_type, &pxy_obj->stack_ca)) == NULL ){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "initialize the x509 publickey failed, the keyring id is %d",
                          pxy_obj->keyring_id);
 		goto finish;
@@ -2038,7 +2026,7 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
     }
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "initialize the x509 certificate, the keyring id is %d",
                      pxy_obj->keyring_id);
-    x509_get_fingerprint(pxy_obj->root, pxy_obj->finger);
+    x509_get_fingerprint(pxy_obj->issuer, pxy_obj->finger);
 
 	*ad = pxy_obj;
 finish:
