@@ -845,14 +845,6 @@ long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
 	atomic64_dec(&pxy_obj->ref_cnt);
     if (atomic64_read(&pxy_obj->ref_cnt) == 0)
     {
-#ifdef RT_REDIS_ADVANCED
-		int xret; char *command;
-		asprintf(&command, "redis-cli keys \"%d*\" | xargs redis-cli del", pxy_obj->keyring_id);
-		xret = system(command);
-		if ((-1 == xret) || (!WIFEXITED(xret)) || (0 != WEXITSTATUS(xret))){
-			mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "del keyringid %d failed", pxy_obj->keyring_id);
-		}
-#endif
         if (pxy_obj->issuer)
             X509_free(pxy_obj->issuer);
         if (pxy_obj->key)
@@ -1423,7 +1415,7 @@ x509_get_rkey(X509 *origin, int keyring_id, char *rkey, int is_valid)
     struct pxy_obj_keyring *pxy_obj = get_obj_for_id(keyring_id);
     if (pxy_obj != NULL)
     {
-        snprintf(rkey, DATALEN, "%d:%s:%s:%d", keyring_id, hex, pxy_obj->finger, is_valid);
+        snprintf(rkey, DATALEN, "%d:%lu:%s:%d", keyring_id, pxy_obj->op_time, hex, is_valid);
         goto finish;
     }
     snprintf(rkey, DATALEN, "%d:%s:%d", keyring_id, hex, is_valid);
@@ -2002,10 +1994,10 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
     memset(pxy_obj, 0, sizeof(struct pxy_obj_keyring));
 	atomic64_set(&pxy_obj->ref_cnt, 1);
 
-	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d\t%d", &pxy_obj->keyring_id, profile_name,
+	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d\t%d\t%lu", &pxy_obj->keyring_id, profile_name,
 		       pxy_obj->keyring_type, private_file, public_file, &pxy_obj->expire_time, pxy_obj->public_algo,
-		       pxy_obj->v3_ctl, &pxy_obj->is_send, &pxy_obj->is_valid);
-	if(ret!=10)
+		       pxy_obj->v3_ctl, &pxy_obj->is_send, &pxy_obj->is_valid, &pxy_obj->op_time);
+	if(ret!=11)
 	{
         kfree(pxy_obj);
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore parse config failed: %s", table_line);
@@ -2026,8 +2018,6 @@ const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__)
     }
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "initialize the x509 certificate, the keyring id is %d",
                      pxy_obj->keyring_id);
-    x509_get_fingerprint(pxy_obj->issuer, pxy_obj->finger);
-
 	*ad = pxy_obj;
 finish:
 	return;

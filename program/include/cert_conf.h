@@ -42,9 +42,9 @@ struct pxy_obj_keyring{
     char keyring_type[CT_ARRARY_LEN];
 	char public_algo[CT_STRING_MAX];
 	char v3_ctl[CT_STRING_MAX];
-    char finger[EVP_MAX_MD_SIZE];
 	int is_send;
-	int is_valid;	
+	int is_valid;
+    uint64_t op_time;
 	atomic64_t ref_cnt;
     STACK_OF(X509) *stack_ca;
 };
