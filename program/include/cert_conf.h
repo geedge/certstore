@@ -44,7 +44,7 @@ struct pxy_obj_keyring{
 	char v3_ctl[CT_STRING_MAX];
 	int is_send;
 	int is_valid;
-    uint64_t op_time;
+    time_t op_time;
 	atomic64_t ref_cnt;
     STACK_OF(X509) *stack_ca;
 };
