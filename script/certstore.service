@@ -1,0 +1,12 @@
+[Unit]
+Description=Certificate Signing Engine
+After=redis.service
+
+[Service]
+WorkingDirectory=/home/tsg/certstore
+ExecStart=/home/tsg/certstore/certstore
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
