@@ -123,50 +123,140 @@ finish:
 	return;
 }
 
-static int x509_public_str2idx(const char *public_algo)
-{
-	int bits = 1024;
+#define R_RSA_ALGO_1024 1024
+#define R_RSA_ALGO_2048 2048
+#define R_RSA_ALGO_4096 4096
 
-	if (public_algo != NULL && strcasestr(public_algo, "1024") != NULL)
+typedef struct {
+    const char *name;           /* NIST Name of curve */
+    int nid;                    /* Curve NID */
+} x509_algo_name;
+
+static x509_algo_name algo_name[] = {
+    {"rsa1024", R_RSA_ALGO_1024},
+    {"rsa2048", R_RSA_ALGO_2048},
+    {"rsa4096", R_RSA_ALGO_4096},
+    {"secp192r1", NID_X9_62_prime192v1},
+    {"secp256r1", NID_X9_62_prime256v1},
+};
+
+static size_t x509_algo_str2idx(const char *public_algo)
+{
+	size_t i = 0;
+
+	if(public_algo == NULL)
 	{
-		bits = 1024;
+		goto finish;
 	}
-	if (public_algo != NULL && strcasestr(public_algo, "2048") != NULL)
+
+	for (i = 0; i < sizeof(algo_name) / sizeof(x509_algo_name); i++)
 	{
-		bits = 2048;
+		if (0 == strcasecmp(public_algo, algo_name[i].name))
+		{
+			return algo_name[i].nid;
+		}
 	}
-	if (public_algo != NULL && strcasestr(public_algo, "4096") != NULL)
-	{
-		bits = 4096;
-	}
-	return bits;
+finish:
+	return R_RSA_ALGO_2048;
 }
 
-static
-int ssl_key_genrsa(EVP_PKEY** pkey, char *pubkey, char *public_algo)
+static int ssl_key_gen_rsa(EVP_PKEY** pkey, int nid)
 {
     RSA *rsa = NULL;
     EVP_PKEY *pk = NULL;
 
     if((pk = EVP_PKEY_new()) == NULL){
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "ssl_key_genrsa, gen new key failed!");
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "ssl_key_gen_rsa, gen new key failed!");
         goto err;
     }
 
-    rsa = RSA_generate_key(x509_public_str2idx(public_algo), RSA_F4, NULL, NULL);
+    rsa = RSA_generate_key(nid, RSA_F4, NULL, NULL);
     if(!EVP_PKEY_assign_RSA(pk, rsa)){
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "ssl_key_genrsa, assign key failed!");
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "ssl_key_gen_rsa, assign key failed!");
         EVP_PKEY_free(pk);
         goto err;
     }
-    x509_get_private_key(pk, pubkey);
-    rsa = NULL;
-
-    *pkey = pk;
+	rsa = NULL;
+	*pkey = pk;
     return 1;
-
 err:
     return 0;
+}
+
+int ssl_key_gen_ecc(EVP_PKEY** pkey, int nid)
+{
+	EC_GROUP *group = NULL;
+	EVP_PKEY *pk = NULL;
+
+	EC_KEY *eckey = EC_KEY_new();
+	if(eckey == NULL)
+	{
+		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "create ec key faild");
+		goto error;
+	}
+
+	/** Take an elliptic curve */
+    group = EC_GROUP_new_by_curve_name(nid);
+	if (group == NULL)
+	{
+		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "unable to create curve (%d)\n", nid);
+		goto error;
+	}
+	EC_GROUP_set_asn1_flag(group, OPENSSL_EC_NAMED_CURVE);
+	EC_GROUP_set_point_conversion_form(group, POINT_CONVERSION_UNCOMPRESSED);
+
+	if (EC_KEY_set_group(eckey, group) == 0)
+		goto error;
+
+	if (!EC_KEY_generate_key(eckey))
+	{
+        goto error;
+    }
+	if((pk = EVP_PKEY_new()) == NULL){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "ssl_key_gen_ecc, gen new key failed!");
+        goto error;
+    }
+    if(!EVP_PKEY_assign_EC_KEY(pk, eckey)){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "ssl_key_gen_ecc, assign key failed!");
+        EVP_PKEY_free(pk);
+        goto error;
+    }
+	eckey = NULL;
+	*pkey = pk;
+	return 1;
+
+error:
+	if(eckey!=NULL)
+		EC_KEY_free(eckey);
+	return 0;
+}
+
+static int ssl_key_gen(EVP_PKEY** pkey, char *pubkey, char *public_algo)
+{
+	int ret = 0, nid = 0;
+
+	nid = x509_algo_str2idx(public_algo);
+	switch(nid)
+	{
+		case R_RSA_ALGO_1024:
+		case R_RSA_ALGO_2048:
+		case R_RSA_ALGO_4096:
+			ret = ssl_key_gen_rsa(pkey, nid);
+			break;
+		case NID_X9_62_prime192v1:
+		case NID_X9_62_prime256v1:
+			ret = ssl_key_gen_ecc(pkey, nid);
+			break;
+		default:
+			break;
+	}
+
+	if (ret != 1 || pkey == NULL)
+		return 0;
+
+	x509_get_private_key(*pkey, pubkey);
+
+	return 1;
 }
 
 static X509* base_load_pkcs12(BIO *in, EVP_PKEY **pkey, X509 **x, STACK_OF(X509) **ca)
@@ -495,17 +585,40 @@ static time_t ASN1_GetTimeT(ASN1_TIME* time)
     return mktime(&t);
 }
 
-X509 *
-ssl_x509_forge(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey, int *expire_time, char *crlurl, char *public_algo)
+void x509_get_private_ecc_key(EC_KEY *key1, char *pubkey)
+{
+	BIO *bp = NULL;
+    int len = 0;
+
+    if ( (bp=BIO_new(BIO_s_mem())) == NULL){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "unable to create BIO for output");
+        goto finish;
+    }
+	PEM_write_bio_ECPrivateKey(bp, key1, NULL, NULL, 0, NULL, NULL);
+    len = BIO_read(bp, pubkey, SG_DATA_SIZE);
+    if(len <= 0){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Error reading signature file");
+        goto free_err;
+    }
+    pubkey[len] = '\0';
+
+free_err:
+    BIO_free(bp);
+finish:
+	return;
+}
+
+X509 *ssl_x509_forge(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey, int *expire_time, char *crlurl, char *public_algo)
 {
 	int rv;
 	X509 *crt = NULL;
     EVP_PKEY* key = NULL;
 	X509_NAME *subject = NULL, *issuer = NULL;
 
-    if(!ssl_key_genrsa(&key, pkey, public_algo)){
+    if(!ssl_key_gen(&key, pkey, public_algo)){
         goto err;
     }
+
 	//subjectname,issuername
 	subject = X509_get_subject_name(origcrt);
 	issuer = X509_get_subject_name(cacrt);
@@ -1955,23 +2068,6 @@ static int mesa_fiel_stat_init()
 	FS_start(SGstats.handle);
 
     return 0;
-}
-
-static void
-x509_get_fingerprint(X509 *x509, char *finger)
-{
-    int xret = -1;
-    unsigned int len = 0, i = 0;
-    unsigned char fdig[EVP_MAX_MD_SIZE] = {0};
-
-    xret = X509_digest(x509, EVP_sha1(), fdig, &len);
-    if (xret != 1)
-        goto finish;
-    for (i = 0; i < len ; ++i){
-        sprintf(finger + i * sizeof(unsigned char) * 2, "%02x", fdig[i]);
-    }
-finish:
-    return;
 }
 
 void keyring_table_new_cb(int __attribute__((__unused__))table_id, const char  __attribute__((__unused__))*key,
