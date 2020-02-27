@@ -126,6 +126,7 @@ finish:
 #define R_RSA_ALGO_1024 1024
 #define R_RSA_ALGO_2048 2048
 #define R_RSA_ALGO_4096 4096
+#define R_DH_ALGO_1024 1
 
 typedef struct {
     const char *name;           /* NIST Name of curve */
@@ -136,17 +137,22 @@ static x509_algo_name algo_name[] = {
     {"rsa1024", R_RSA_ALGO_1024},
     {"rsa2048", R_RSA_ALGO_2048},
     {"rsa4096", R_RSA_ALGO_4096},
-    {"secp192r1", NID_X9_62_prime192v1},
     {"secp256r1", NID_X9_62_prime256v1},
+    {"secp384r1",NID_secp384r1}
 };
 
 static size_t x509_algo_str2idx(const char *public_algo)
 {
-	size_t i = 0;
+	size_t i = 0; int nid = 0;
 
 	if(public_algo == NULL)
 	{
 		goto finish;
+	}
+
+	if (0 == strcasecmp(public_algo, "dh1024"))
+	{
+		return R_DH_ALGO_1024;
 	}
 
 	for (i = 0; i < sizeof(algo_name) / sizeof(x509_algo_name); i++)
@@ -156,6 +162,7 @@ static size_t x509_algo_str2idx(const char *public_algo)
 			return algo_name[i].nid;
 		}
 	}
+
 finish:
 	return R_RSA_ALGO_2048;
 }
@@ -181,6 +188,50 @@ static int ssl_key_gen_rsa(EVP_PKEY** pkey, int nid)
     return 1;
 err:
     return 0;
+}
+
+int ssl_key_gen_dh(EVP_PKEY** pkey, int nid)
+{
+	EVP_PKEY *pk = NULL;
+
+	DH *dh = DH_new();
+	if(dh == NULL)
+	{
+		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "create dh key faild");
+		goto error;
+	}
+#if 0
+    dh = DH_generate_parameters(nid, DH_GENERATOR_2, NULL, NULL);
+    if (dh == NULL)
+    {
+        return 0;
+    }
+    DH_generate_key(dh);
+#endif
+	if (!DH_generate_parameters_ex(dh, nid, DH_GENERATOR_2, NULL))
+	{
+        goto error;
+    }
+	if (!DH_generate_key(dh))
+	{
+		goto error;
+	}
+
+	if((pk = EVP_PKEY_new()) == NULL){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "ssl_key_gen_ecc, gen new key failed!");
+        goto error;
+    }
+	if(!EVP_PKEY_assign_DH(pk, dh)){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "ssl_key_gen_ecc, assign key failed!");
+        EVP_PKEY_free(pk);
+        goto error;
+    }
+	*pkey = pk;
+	return 1;
+error:
+	if(dh!=NULL)
+		DH_free(dh);
+	return 0;
 }
 
 int ssl_key_gen_ecc(EVP_PKEY** pkey, int nid)
@@ -243,10 +294,12 @@ static int ssl_key_gen(EVP_PKEY** pkey, char *pubkey, char *public_algo)
 		case R_RSA_ALGO_4096:
 			ret = ssl_key_gen_rsa(pkey, nid);
 			break;
-		case NID_X9_62_prime192v1:
 		case NID_X9_62_prime256v1:
+		case NID_secp384r1:
 			ret = ssl_key_gen_ecc(pkey, nid);
 			break;
+ 		case R_DH_ALGO_1024:
+			ret = ssl_key_gen_dh(pkey, 1024);
 		default:
 			break;
 	}
