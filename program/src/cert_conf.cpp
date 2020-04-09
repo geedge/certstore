@@ -16,7 +16,7 @@
 #include "cert_conf.h"
 #include "logging.h"
 
-#include "MESA_prof_load.h"
+#include <MESA/MESA_prof_load.h>
 
 struct config_bucket_t certConfig;
 

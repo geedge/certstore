@@ -39,7 +39,7 @@
 
 #include <async.h>
 #include <MESA/Maat_rule.h>
-#include <field_stat2.h>
+#include <MESA/field_stat2.h>
 #include <MESA/MESA_prof_load.h>
 #include <MESA/MESA_htable.h>
 
@@ -1126,8 +1126,15 @@ static int x509_online_append(struct x509_object_ctx *def, struct tfe_http_reque
         {
             if (1==is_valid)  pxy_obj = get_obj_for_id(1);
             if (0==is_valid)  pxy_obj = get_obj_for_id(0);
-            assert(pxy_obj!=NULL);
-            mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Certificate issued by table id %d", keyring_id);
+			if (pxy_obj == NULL)
+			{
+				mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Get the default keypair failed, EXIT!!!");
+				exit(0);
+			}
+			else
+			{
+				mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Certificate issued by table id %d", keyring_id);
+			}
         }
         else
         {
