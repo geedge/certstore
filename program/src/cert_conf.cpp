@@ -20,7 +20,8 @@
 
 struct config_bucket_t certConfig;
 
-struct config_bucket_t *cert_default_config()
+
+struct config_bucket_t *cfg_instanec()
 {
     return &certConfig;
 }
@@ -29,7 +30,7 @@ static int load_system_config(const char *config)
 {
     int xret = -1;
 
-    struct config_bucket_t *rte = cert_default_config();
+    struct config_bucket_t *rte = cfg_instanec();
 
     xret = MESA_load_profile_uint_nodef(config, "CONFIG", "thread-nu", &(rte->thread_nu));
     if (xret < 0){
@@ -73,7 +74,7 @@ static int load_module_config(const char *config)
 {
     int xret = -1;
 
-    struct config_bucket_t *rte = cert_default_config();
+    struct config_bucket_t *rte = cfg_instanec();
 
     xret = MESA_load_profile_short_nodef(config, "LIBEVENT", "port", (short *)&(rte->addr_t.e_port));
     if (xret < 0){
@@ -111,6 +112,17 @@ static int load_module_config(const char *config)
         goto finish;
     }
 
+	xret = MESA_load_profile_string_nodef(config, "stat", "statsd_server", rte->addr_t.statsd_server, 16);
+    if (xret < 0){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Certsotre redis ip invalid");
+        goto finish;
+    }
+
+    xret = MESA_load_profile_short_nodef(config, "stat", "statsd_port", (short *)&(rte->addr_t.statsd_port));
+    if (xret < 0){
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Certsotre redis port invalid");
+        goto finish;
+    }
 finish:
     return xret;
 }
@@ -119,14 +131,14 @@ static int load_maat_config(const char *config)
 {
     int xret = -1;
 
-    struct ntc_maat_t *maat_t = &cert_default_config()->maat_t;
+    struct ntc_maat_t *maat_t = &cfg_instanec()->maat_t;
 
-    xret = MESA_load_profile_uint_nodef(config, "NTC_MAAT", "maat_json_switch", &(maat_t->maat_json_switch));
+    xret = MESA_load_profile_uint_nodef(config, "MAAT", "maat_json_switch", &(maat_t->maat_json_switch));
     if (xret < 0){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the number of running threads failed");
     }
 
-    xret = MESA_load_profile_string_nodef(config, "NTC_MAAT", "table_info", maat_t->info_path, 128);
+    xret = MESA_load_profile_string_nodef(config, "MAAT", "table_info", maat_t->info_path, 128);
     if (xret < 0 && !rt_file_exsit( maat_t->info_path)){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the table info failed or the (%s) does not exist",
                           maat_t->info_path);
@@ -134,7 +146,7 @@ static int load_maat_config(const char *config)
     }
 
     if (maat_t->maat_json_switch == 1){
-        xret = MESA_load_profile_string_nodef(config, "NTC_MAAT", "pxy_obj_keyring", maat_t->pxy_path, 128);
+        xret = MESA_load_profile_string_nodef(config, "MAAT", "pxy_obj_keyring", maat_t->pxy_path, 128);
          if (xret < 0 && !rt_file_exsit(maat_t->pxy_path)){
              mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the pxy obj keyring failed or the (%s) does not exist",
                               maat_t->pxy_path);
@@ -143,17 +155,17 @@ static int load_maat_config(const char *config)
     }
 
     if (maat_t->maat_json_switch == 0){
-        xret = MESA_load_profile_uint_nodef(config, "NTC_MAAT", "effective_interval", &(maat_t->effective_interval_s));
+        xret = MESA_load_profile_uint_nodef(config, "MAAT", "effective_interval", &(maat_t->effective_interval_s));
         if (xret < 0){
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Reading the interval of scan failed");
         }
-        xret = MESA_load_profile_string_nodef(config, "NTC_MAAT", "inc_cfg_dir", maat_t->inc_cfg_dir, 128);
+        xret = MESA_load_profile_string_nodef(config, "MAAT", "inc_cfg_dir", maat_t->inc_cfg_dir, 128);
         if (xret < 0 && !rt_file_exsit( maat_t->inc_cfg_dir)){
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the table info failed or the (%s) does not exist",
                               maat_t->inc_cfg_dir);
             goto finish;
         }
-        xret = MESA_load_profile_string_nodef(config, "NTC_MAAT", "full_cfg_dir", maat_t->full_cfg_dir, 128);
+        xret = MESA_load_profile_string_nodef(config, "MAAT", "full_cfg_dir", maat_t->full_cfg_dir, 128);
         if (xret < 0 && !rt_file_exsit( maat_t->full_cfg_dir)){
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the table info failed or the (%s) does not exist",
                               maat_t->full_cfg_dir);

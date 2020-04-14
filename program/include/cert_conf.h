@@ -31,6 +31,7 @@ struct tfe_http_request{
     int keyring_id;
     char *sni;
     char rkey[DATALEN];
+    struct timespec create_time;
     struct evhttp_request *evh_req;
 };
 
@@ -50,13 +51,16 @@ struct pxy_obj_keyring{
 };
 
 struct _initer_addr_t{
-    uint16_t e_port;    /*libevent prot*/
+    uint16_t e_port;       /*libevent prot*/
     uint16_t maat_port;    /*maat redis port*/
     char maat_ip[16];      /*maat redis ip */
     int dbindex;           /*maat redis dbindex*/
 
     uint16_t store_port;   /*store redis port */
     char store_ip[16];     /*store redis ip*/
+
+    uint16_t statsd_port;
+    char statsd_server[16];
 };
 
 struct ntc_maat_t{
@@ -81,7 +85,7 @@ struct config_bucket_t{
     struct _initer_addr_t addr_t;
 };
 
-extern struct config_bucket_t *cert_default_config();
+extern struct config_bucket_t *cfg_instanec();
 
 void cert_init_config(const char *config);
 

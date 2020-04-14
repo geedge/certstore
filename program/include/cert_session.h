@@ -101,12 +101,6 @@ typedef struct {
 
     void * (*routine)(void *);  /** Executive entry */
 
-    int field_ids;    /* dispaly */
-
-    int column_ids;
-
-    uint64_t diffTime;
-
 } x509_forge_thread;
 
 int cert_session_init();
