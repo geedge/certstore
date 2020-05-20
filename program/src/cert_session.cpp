@@ -1551,6 +1551,11 @@ static int http_decode_uri(struct evhttp_request *evh_req, struct tfe_http_reque
 	{
 		return -1;
 	}
+	const char *health_check = evhttp_find_header(&params, "health_check");
+	if (health_check)
+	{
+		return -2;
+	}
 	const char *keyring_id = evhttp_find_header(&params, "keyring_id");
     if (keyring_id)
     {
@@ -1719,7 +1724,15 @@ void http_get_cb(struct evhttp_request *evh_req, void *arg)
 	xret = http_decode_uri(evh_req, request);
 	if (xret != 0)
 	{
-		goto error;
+		if (xret == -2)
+		{
+			evhttp_send_reply(evh_req, 200, "OK", NULL);
+			goto finish;
+		}
+		else
+		{
+			goto error;
+		}
 	}
 	evhttp_connection_set_closecb(evhttp_request_get_connection(evh_req), evhttp_socket_close_cb, NULL);
 	evbuf_body = evhttp_request_get_input_buffer(evh_req);
@@ -2003,7 +2016,7 @@ redis_link_detection(uint32_t __attribute__((__unused__)) uid,
 }
 
 static int
-keyring_create_socket()
+keyring_server_init()
 {
     int xret                  = -1;
     unsigned int tid          = 0;
@@ -2302,7 +2315,7 @@ int cert_session_init()
 
     maat_feather_init();
 
-    keyring_create_socket();
+    keyring_server_init();
 
     return 0;
 }
