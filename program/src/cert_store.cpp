@@ -45,7 +45,7 @@ void cert_preview ()
     struct config_bucket_t *rte = cfg_instanec();
 
     printf("\r\nBasic Configuration of CertStore \n");
-	printf("%30s:%45s\n", "Run Mode", (rte->mode == 1)?"rsync":"sync");
+	printf("%30s:%45s\n", "Run Mode", (rte->mode == 1)?"async":"sync");
     printf("%30s:%45d\n", "The Threads", rte->thread_nu);
     printf("%30s:%45s\n", "Store Redis Ip", rte->addr_t.store_ip);
     printf("%30s:%45d\n", "Store Redis Port", rte->addr_t.store_port);

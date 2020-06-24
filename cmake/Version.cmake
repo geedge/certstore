@@ -18,6 +18,11 @@ include(${__VERSION_CONFIG})
 string(REGEX REPLACE "^v([0-9]+)\\..*" "\\1" TARGET_MAJOR "${VCS_TAG}")
 string(REGEX REPLACE "^v[0-9]+\\.([0-9]+).*" "\\1" TARGET_MINOR "${VCS_TAG}")
 string(REGEX REPLACE "^v[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1" TARGET_PATCH "${VCS_TAG}")
+string(REGEX MATCH  "[^-]*$" TARGET_TAGS "${VCS_TAG}")
+
+if(TARGET_TAGS)
+    set(TARGET_PATCH ${TARGET_PATCH}.${TARGET_TAGS})
+endif()
 
 if(NOT TARGET_MAJOR)
     set(TARGET_MAJOR 1)

@@ -1133,6 +1133,7 @@ static int x509_online_append(struct x509_object_ctx *def, struct tfe_http_reque
     int is_valid = request->is_valid; int keyring_id = request->keyring_id;
     int expire_time = 0; char *serial = NULL;
     X509 *cacrt = NULL; EVP_PKEY *cakey = NULL;
+	char *v3_ctl=NULL, *public_algo=NULL;
 
     struct config_bucket_t *rte = cfg_instanec();
 
@@ -1153,7 +1154,7 @@ static int x509_online_append(struct x509_object_ctx *def, struct tfe_http_reque
 			}
 			else
 			{
-				mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Certificate issued by table id %d", keyring_id);
+				mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Get the keypar %d, sign cert", keyring_id);
 			}
         }
         else
@@ -1161,7 +1162,7 @@ static int x509_online_append(struct x509_object_ctx *def, struct tfe_http_reque
             cacrt = (is_valid == 1) ? def->root : def->insec_root;
             cakey  = (is_valid == 1) ? def->key  : def->insec_key;
             expire_time = cfg_instanec()->expire_after;
-            mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Certificate issued by local cert");
+            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Warning: Use local keypair, sign cert!!!");
             goto modify;
         }
     }
@@ -1180,10 +1181,12 @@ static int x509_online_append(struct x509_object_ctx *def, struct tfe_http_reque
     }
     cacrt = pxy_obj->issuer;
     cakey  = pxy_obj->key;
+	v3_ctl = pxy_obj->v3_ctl;
+	public_algo =pxy_obj->public_algo;
     expire_time = pxy_obj->expire_time;
 	*stack_ca = pxy_obj->stack_ca;
 modify:
-    x509 = ssl_x509_forge(cacrt, cakey, request->origin, pkey, &expire_time, pxy_obj->v3_ctl, pxy_obj->public_algo);
+    x509 = ssl_x509_forge(cacrt, cakey, request->origin, pkey, &expire_time, v3_ctl, public_algo);
     if (!x509){
         goto finish;
     }
