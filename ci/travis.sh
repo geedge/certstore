@@ -33,7 +33,10 @@ env | sort
 : "${COMPILER_IS_GNUCXX:=OFF}"
 
 # Install dependency from YUM
-yum install -y mrzcpd framework numactl-devel zlib-devel librdkafka-devel systemd-devel
+
+yum install -y libcjson-devel libmaatframe-devel libMESA_field_stat2-devel libMESA_handle_logger-devel 
+yum install -y libMESA_htable-devel libMESA_prof_load-devel librulescan-devel libwiredcfg-devel libWiredLB-devel sapp-devel
+
 mkdir build || true
 cd build
 
