@@ -3,8 +3,8 @@ Description=Certificate Signing Engine
 After=redis.service
 
 [Service]
-WorkingDirectory=/home/tsg/certstore
-ExecStart=/home/tsg/certstore/certstore
+WorkingDirectory=/opt/tsg/certstore
+ExecStart=/opt/tsg/certstore/bin/certstore
 Restart=always
 RestartSec=5s
 

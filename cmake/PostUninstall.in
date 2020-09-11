@@ -1,0 +1,3 @@
+%sysctl_apply
+%tmpfiles_create
+/sbin/ldconfig

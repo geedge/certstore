@@ -5,6 +5,7 @@ else()
 endif()
 
 set(CPACK_PACKAGE_VENDOR "MESASOFT")
+set(CMAKE_INSTALL_PREFIX "/opt/tsg/certstore")
 set(CPACK_PACKAGE_VERSION_MAJOR "${TARGET_MAJOR}")
 set(CPACK_PACKAGE_VERSION_MINOR "${TARGET_MINOR}")
 set(CPACK_PACKAGE_VERSION_PATCH "${TARGET_PATCH}.${TARGET_DESCRIBE}")
@@ -17,24 +18,22 @@ set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 set(CPACK_RPM_PACKAGE_AUTOREQPROV "no")
 set(CPACK_RPM_PACKAGE_RELEASE_DIST on)
 set(CPACK_RPM_DEBUGINFO_PACKAGE on)
-set(CPACK_RPM_PRE_INSTALL_SCRIPT_FILE ${CMAKE_SOURCE_DIR}/cmake/PreInstall.in)
-#set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE ${CMAKE_SOURCE_DIR}/cmake/PostInstall.in)
-#set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE ${CMAKE_SOURCE_DIR}/cmake/PostUninstall.in)
-#set(CPACK_RPM_PRE_UNINSTALL_SCRIPT_FILE ${CMAKE_SOURCE_DIR}/cmake/PreUninstall.in)
+set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE ${CMAKE_SOURCE_DIR}/cmake/PostInstall.in)
+set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE ${CMAKE_SOURCE_DIR}/cmake/PostUninstall.in)
+set(CPACK_RPM_PRE_UNINSTALL_SCRIPT_FILE ${CMAKE_SOURCE_DIR}/cmake/PreUninstall.in)
 
-set(CMAKE_INSTALL_PREFIX "/home/tsg/certstore")
+
 set(CPACK_RPM_BUILD_SOURCE_DIRS_PREFIX /home/tsg)
 
-install(PROGRAMS build/program/certstore DESTINATION ./)
+install(PROGRAMS build/program/certstore DESTINATION ./bin)
 install(DIRECTORY resource/cert DESTINATION ./) 
 install(DIRECTORY resource/conf DESTINATION ./)
-#install(FILES resource/package/r2_certstore DESTINATION ./)
-#install(FILES resource/package/r3_certstore DESTINATION ./)
-#install(FILES resource/package/Makefile DESTINATION ./)
 
-install(FILES script/signssl.sh DESTINATION ./tool)
-install(FILES script/x509 DESTINATION ./tool)
-install(FILES script/certstore.service DESTINATION /usr/lib/systemd/system/)
+install(FILES script/tool/signssl.sh DESTINATION ./tool)
+install(FILES script/tool/x509 DESTINATION ./tool)
+
+install(FILES script/service/certstore.service DESTINATION /usr/lib/systemd/system/)
+install(FILES script/tmpfiles/cert_store.conf DESTINATION /usr/lib/tmpfiles.d/)
 
 # Must uninstall the debug package before install release package
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
