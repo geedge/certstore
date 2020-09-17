@@ -1035,6 +1035,10 @@ long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
             X509_free(pxy_obj->issuer);
         if (pxy_obj->key)
             EVP_PKEY_free(pxy_obj->key);
+
+		if (pxy_obj->stack_ca)
+			sk_X509_pop_free(pxy_obj->stack_ca, X509_free);
+
         free(pxy_obj);
         pxy_obj = NULL;
         *ad=NULL;
@@ -1544,11 +1548,6 @@ static int http_decode_uri(struct evhttp_request *evh_req, struct tfe_http_reque
     struct evkeyvalq params;
 
 	const char *uri = evhttp_request_get_uri(evh_req);
-	char *decoded_uri = evhttp_decode_uri(uri);
-	if (!decoded_uri)
-	{
-		return -1;
-	}
     rv = evhttp_parse_query(uri, &params);
 	if (rv != 0)
 	{
@@ -1574,6 +1573,8 @@ static int http_decode_uri(struct evhttp_request *evh_req, struct tfe_http_reque
     {
 		request->sni = strdup(sni);
 	}
+	evhttp_clear_headers(&params);
+
 	mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "[Thread %d]Received request for uri, kering_id:%d, sni:%s, valid:%d",
                      request->thread_id, request->keyring_id, request->sni, request->is_valid);
 
