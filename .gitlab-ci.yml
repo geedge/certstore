@@ -3,7 +3,7 @@ image: "git.mesalab.cn:7443/mesa_platform/build-env:master"
 variables:
   GIT_STRATEGY: "clone"
   BUILD_PADDING_PREFIX: /tmp/padding_for_CPACK_RPM_BUILD_SOURCE_DIRS_PREFIX_PREFIX_PREFIX_PREFIX_PREFIX_PREFIX/
-  INSTALL_PREFIX: "/home/tsg/certstore"
+  INSTALL_PREFIX: "/opt/tsg/certstore"
   TESTING_VERSION_BUILD: 0
 
 stages:
@@ -18,6 +18,7 @@ stages:
   script:
   - yum makecache
   - ./ci/travis.sh
+  - cd build
   tags:
   - share
 
@@ -27,8 +28,8 @@ branch_build_debug:
   variables:
     BUILD_TYPE: Debug
   except:
-    - /^develop-.*$/i
-    - /^release-.*$/i
+    - /^develop.*$/i
+    - /^master.*$/i
     - tags
 
 branch_build_release:
@@ -37,54 +38,48 @@ branch_build_release:
     BUILD_TYPE: RelWithDebInfo
   extends: .build_by_travis
   except:
-    - /^develop-.*$/i
-    - /^release-.*$/i
+    - /^develop.*$/i
+    - /^master.*$/i
     - tags
 
 develop_build_debug:
   stage: build
   extends: .build_by_travis
   variables:
-    TESTING_VERSION_BUILD: 1
-    UPLOAD_SYMBOL_FILES: 1
     BUILD_TYPE: Debug
     PACKAGE: 1
-    PULP3_REPO_NAME: certstore-testing-x86_64.el7
-    PULP3_DIST_NAME: certstore-testing-x86_64.el7
   artifacts:
     name: "certstore-develop-$CI_COMMIT_REF_NAME-debug"
     paths:
       - build/*.rpm
   only:
-    - /^develop-.*$/i
-    - /^release-.*$/i
+    - /^develop.*$/i
+    - /^master.*$/i
 
 develop_build_release:
   stage: build
   extends: .build_by_travis
   variables:
-    TESTING_VERSION_BUILD: 1
-    UPLOAD_SYMBOL_FILES: 1
     BUILD_TYPE: RelWithDebInfo
     PACKAGE: 1
-    PULP3_REPO_NAME: certstore-testing-x86_64.el7
-    PULP3_DIST_NAME: certstore-testing-x86_64.el7
   artifacts:
     name: "certstore-develop-$CI_COMMIT_REF_NAME-release"
     paths:
       - build/*.rpm
   only:
-    - /^develop-.*$/i
-    - /^release-.*$/i
+    - /^develop.*$/i
+    - /^master.*$/i
 
-release_build_debug:
+
+release_build_release:
   stage: build
   variables:
-    UPLOAD_SYMBOL_FILES: 1
-    BUILD_TYPE: Debug
+    BUILD_TYPE: RelWithDebInfo
     PACKAGE: 1
-    PULP3_REPO_NAME: certstore-stable-x86_64.el7
-    PULP3_DIST_NAME: certstore-stable-x86_64.el7
+    UPLOAD: 1
+    SYMBOL_TARGET: certstore-install
+    PULP3_REPO_NAME: tsg-stable-x86_64.el7
+    PULP3_DIST_NAME: tsg-stable-x86_64.el7
   extends: .build_by_travis
   artifacts:
     name: "certstore-install-$CI_COMMIT_REF_NAME-debug"
@@ -93,14 +88,16 @@ release_build_debug:
   only:
     - tags
 
-release_build_release:
+release_build_release_devel:
   stage: build
   variables:
     BUILD_TYPE: RelWithDebInfo
-    UPLOAD_SYMBOL_FILES: 1
+    ENABLE_DEVEL_SWITCH: "ON"
     PACKAGE: 1
-    PULP3_REPO_NAME: certstore-stable-x86_64.el7
-    PULP3_DIST_NAME: certstore-stable-x86_64.el7
+    UPLOAD: 1
+    SYMBOL_TARGET: certstore-install
+    PULP3_REPO_NAME: tsg-stable-x86_64.el7
+    PULP3_DIST_NAME: tsg-stable-x86_64.el7
   extends: .build_by_travis
   artifacts:
     name: "certstore-install-$CI_COMMIT_REF_NAME-release"

@@ -43,20 +43,21 @@ cd build
 cmake3 -DCMAKE_CXX_FLAGS=$CXX_FLAGS \
       -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
       -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
-      -DTFE_VERSION_DAILY_BUILD=$TESTING_VERSION_BUILD \
+      -DENABLE_DEVEL=$ENABLE_DEVEL_SWITCH \
       ..
 
 make
-#make test
 
 if [ -n "${PACKAGE}" ]; then
 	make package
-	#cp ~/rpm_upload_tools.py ./
-	#python3 rpm_upload_tools.py ${PULP3_REPO_NAME} ${PULP3_DIST_NAME} *.rpm
 fi
 
-if [ -n "${UPLOAD_SYMBOL_FILES}" ]; then
-  rpm -i certstore*debuginfo*.rpm
-  #cp /usr/lib/debug/opt/tsg/tfe/bin/tfe.debug /tmp/tfe.debuginfo.${CI_COMMIT_SHORT_SHA}
-  #sentry-cli upload-dif -t elf /tmp/tfe.debuginfo.${CI_COMMIT_SHORT_SHA}
+if [ -n "${UPLOAD}" ]; then	
+	cp ~/rpm_upload_tools.py ./
+	python3 rpm_upload_tools.py ${PULP3_REPO_NAME} ${PULP3_DIST_NAME} *.rpm
+	
+	rpm -i $SYMBOL_TARGET*debuginfo*.rpm
+	_symbol_file=`find /usr/lib/debug/ -name "$SYMBOL_TARGET*.debug"`
+	cp $_symbol_file ${_symbol_file}info.${CI_COMMIT_SHORT_SHA}
+	sentry-cli upload-dif -t elf ${_symbol_file}info.${CI_COMMIT_SHORT_SHA}
 fi

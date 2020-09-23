@@ -19,4 +19,5 @@ target_link_libraries(certstore dl common
 		MESA_handle_logger
 		hiredis-static
 		MESA_field_stat
+		gperftools-static
 		${SYSTEMD_LIBRARIES})
