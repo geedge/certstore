@@ -99,6 +99,22 @@ add_dependencies(gmock googletest)
 set_property(TARGET gmock PROPERTY IMPORTED_LOCATION ${INSTALL_DIR}/lib/libgmock.a)
 set_property(TARGET gmock PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${INSTALL_DIR}/include)
 
+### gperftools
+ExternalProject_Add(gperftools
+        PREFIX gperftools
+        URL ${CMAKE_CURRENT_SOURCE_DIR}/gperftools-2.7.tar.gz
+        URL_MD5 c6a852a817e9160c79bdb2d3101b4601
+        CONFIGURE_COMMAND ./configure --prefix=<INSTALL_DIR> --disable-shared
+        BUILD_IN_SOURCE 1)
+
+ExternalProject_Get_Property(gperftools INSTALL_DIR)
+file(MAKE_DIRECTORY ${INSTALL_DIR}/include)
+
+add_library(gperftools-static STATIC IMPORTED GLOBAL)
+add_dependencies(gperftools-static gperftools)
+set_property(TARGET gperftools-static PROPERTY IMPORTED_LOCATION ${INSTALL_DIR}/lib/libtcmalloc.a)
+set_property(TARGET gperftools-static PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${INSTALL_DIR}/include)
+
 ### MESA Framework
 # Consider the MESA Framework is installed in the system. We declare a imported target instead of
 # ExternalProject target. we may retrive the MESAFramework source code from git.mesalab.cn and
