@@ -77,12 +77,12 @@ release_build_release:
     BUILD_TYPE: RelWithDebInfo
     PACKAGE: 1
     UPLOAD: 1
-    SYMBOL_TARGET: certstore-install
+    SYMBOL_TARGET: certstore
     PULP3_REPO_NAME: tsg-stable-x86_64.el7
     PULP3_DIST_NAME: tsg-stable-x86_64.el7
   extends: .build_by_travis
   artifacts:
-    name: "certstore-install-$CI_COMMIT_REF_NAME-debug"
+    name: "certstore-$CI_COMMIT_REF_NAME-debug"
     paths:
     - build/*.rpm
   only:
@@ -95,12 +95,12 @@ release_build_release_devel:
     ENABLE_DEVEL_SWITCH: "ON"
     PACKAGE: 1
     UPLOAD: 1
-    SYMBOL_TARGET: certstore-install
+    SYMBOL_TARGET: certstore
     PULP3_REPO_NAME: tsg-stable-x86_64.el7
     PULP3_DIST_NAME: tsg-stable-x86_64.el7
   extends: .build_by_travis
   artifacts:
-    name: "certstore-install-$CI_COMMIT_REF_NAME-release"
+    name: "certstore-$CI_COMMIT_REF_NAME-release"
     paths:
       - build/*.rpm
   only:

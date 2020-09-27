@@ -2137,7 +2137,7 @@ static int mesa_fiel_stat_init()
 	FS_set_para(fs, APP_NAME, pname, strlen(pname)+1);
 	value=0;
 	FS_set_para(fs, FLUSH_BY_DATE, &value, sizeof(value));
-	snprintf(stat_path, 128, "%s/fs2_%s.status", logging_sc_lid.run_log_path, pname);
+	snprintf(stat_path, 128, "%s/fs2_%s.status", "./logs", pname);
 	FS_set_para(fs, OUTPUT_DEVICE, stat_path, strlen(stat_path)+1);
 	value=1;
 	FS_set_para(fs, PRINT_MODE, &value, sizeof(value));

@@ -5,4 +5,4 @@ add_library(common syslogd/src/logging.cpp json/src/arraylist.c json/src/debug.c
     rt/src/rt_file.cpp rt/src/rt_stdlib.cpp rt/src/rt_string.cpp rt/src/rt_tmr.cpp rt/src/rt_time.cpp)
 
 target_include_directories(common PUBLIC syslogd/include json/include rt/include)
-target_link_libraries(common PUBLIC rt MESA_handle_logger)
+target_link_libraries(common PUBLIC rt MESA_handle_logger breakpad_mini)

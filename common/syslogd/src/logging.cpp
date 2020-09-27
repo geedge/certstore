@@ -19,6 +19,7 @@
 #include "rt_time.h"
 #include "rt_string.h"
 #include "logging.h"
+#include <MESA/breakpad_mini.h>
 #include <MESA/MESA_prof_load.h>
 #include <MESA/MESA_handle_logger.h>
 
@@ -32,24 +33,34 @@ void mesa_logging_print(int log_level, const char *module, const char *msg)
 
 void cert_syslog_init(const char *config)
 {
-    char run_log_path[256] = {0};
+	struct breakpad_instance *breakpad;
 
     MESA_load_profile_int_def(config, (const char *)"SYSTEM",(const char *)"DEBUG_SWITCH",
                               &logging_sc_lid.debug_switch, 1);
-    MESA_load_profile_int_def(config, (const char *)"SYSTEM",(const char *)"RUN_LOG_LEVEL",
-                              &logging_sc_lid.run_log_level, 10);
     MESA_load_profile_string_def(config, (const char *)"SYSTEM",(const char *)"RUN_LOG_PATH",
-                                 logging_sc_lid.run_log_path, 128, NULL);
+	 							logging_sc_lid.run_log_path, 128, "conf/zlog.conf");
 
-    snprintf(run_log_path, 255, "%s/%s", logging_sc_lid.run_log_path, "certstore.log");
+	if (0 != MESA_handle_runtime_log_creation(logging_sc_lid.run_log_path))
+	{
+		fprintf(stderr, "Create log runtime_log_handle error, init failed\n");
+		goto finish;
+	}
 
-    logging_sc_lid.run_log_handle = MESA_create_runtime_log_handle(run_log_path, logging_sc_lid.run_log_level);
-    if(logging_sc_lid.run_log_handle == NULL){
+    logging_sc_lid.run_log_handle = MESA_create_runtime_log_handle("./logs", RLOG_LV_DEBUG);
+    if(logging_sc_lid.run_log_handle == NULL)
+	{
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Create log runtime_log_handle error, init failed!");
         goto finish;
-    }else{
+    }else
+    {
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Log module initialization");
     }
+
+	breakpad = breakpad_init(config, "breakpad", logging_sc_lid.run_log_handle);
+	if(breakpad == NULL)
+	{
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed at starting breakpad.");
+	}
 finish:
     return;
 }
