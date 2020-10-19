@@ -83,14 +83,14 @@ int main(int argc, char **argv)
 				break;
 		}
 	}
-    cert_syslog_init(CERT_BASIC_CFG);
+    cert_syslog_init(CERT_BASIC_CFG, version());
 
     cert_init_config(CERT_BASIC_CFG);
 
     cert_preview();
-	
+
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Cert server init success");
-	
+
     cert_session_init();
 
     signal(SIGINT, sigproc);

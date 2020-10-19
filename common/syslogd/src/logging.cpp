@@ -31,7 +31,7 @@ void mesa_logging_print(int log_level, const char *module, const char *msg)
     return;
 }
 
-void cert_syslog_init(const char *config)
+void cert_syslog_init(const char *config, const char * version)
 {
 	struct breakpad_instance *breakpad;
 
@@ -56,7 +56,7 @@ void cert_syslog_init(const char *config)
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Log module initialization");
     }
 
-	breakpad = breakpad_init(config, "breakpad", logging_sc_lid.run_log_handle);
+	breakpad = breakpad_init(config, "breakpad", logging_sc_lid.run_log_handle, version);
 	if(breakpad == NULL)
 	{
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed at starting breakpad.");
