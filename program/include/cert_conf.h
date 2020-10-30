@@ -37,6 +37,8 @@ struct tfe_http_request{
 
 struct pxy_obj_keyring{
 	int keyring_id;
+    int use_hsm;
+    int slot_id;
 	uint64_t expire_time;
 	EVP_PKEY *key;
     X509 *issuer;
