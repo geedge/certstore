@@ -89,6 +89,6 @@ struct config_bucket_t{
 
 extern struct config_bucket_t *cfg_instanec();
 
-void cert_init_config(const char *config);
+void cert_store_init_config(const char *config);
 
 #endif

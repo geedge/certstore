@@ -176,7 +176,7 @@ finish:
     return xret;
 }
 
-void cert_init_config(const char *config)
+void cert_store_init_config(const char *config)
 {
     load_system_config(config);
 

@@ -40,7 +40,7 @@ enum syslog_display_format{
 };
 
 static
-void cert_preview ()
+void cert_store_preview ()
 {
     struct config_bucket_t *rte = cfg_instanec();
 
@@ -69,6 +69,27 @@ void cert_preview ()
     printf("\r\n");
 }
 
+static int signals[] = {SIGHUP, SIGPIPE, SIGUSR1,SIGINT};
+
+void __signal_handler_cb(int sig)
+{
+	switch (sig)
+	{
+		case SIGHUP:
+			mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Recv signal sighup, reload log config!");
+            cert_store_log_reconstruction();
+            break;
+		case SIGPIPE:
+			break;
+		case SIGUSR1:
+		case SIGINT:
+			sigproc(SIGINT);
+			break;
+		default:
+			break;
+	}
+}
+
 int main(int argc, char **argv)
 {
 	int opt = 0;
@@ -83,17 +104,20 @@ int main(int argc, char **argv)
 				break;
 		}
 	}
-    cert_syslog_init(CERT_BASIC_CFG, version());
+    cert_store_syslog_init(CERT_BASIC_CFG, version());
 
-    cert_init_config(CERT_BASIC_CFG);
+    cert_store_init_config(CERT_BASIC_CFG);
 
-    cert_preview();
+    cert_store_preview();
 
     mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Cert server init success");
 
-    cert_session_init();
+	for (size_t i = 0; i < (sizeof(signals) / sizeof(int)); i++)
+	{
+		signal(signals[i], __signal_handler_cb);
+	}
 
-    signal(SIGINT, sigproc);
+    cert_store_session_init();
 
     return 0;
 }

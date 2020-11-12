@@ -31,7 +31,12 @@ void mesa_logging_print(int log_level, const char *module, const char *msg)
     return;
 }
 
-void cert_syslog_init(const char *config, const char * version)
+void cert_store_log_reconstruction()
+{
+	MESA_handle_runtime_log_reconstruction(NULL);
+}
+
+void cert_store_syslog_init(const char *config, const char * version)
 {
 	struct breakpad_instance *breakpad;
 

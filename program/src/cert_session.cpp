@@ -2116,11 +2116,12 @@ void sigproc(int __attribute__((__unused__))sig)
 
     struct config_bucket_t *rte = cfg_instanec();
 
-    for (tid = 0; tid <  rte->thread_nu; tid++) {
+    for (tid = 0; tid <  rte->thread_nu; tid++)
+	{
         thread = threads + tid;
-        if (thread->sync){
+        if (thread->sync)
+		{
             redisAsyncDisconnect(thread->cl_ctx);
-            free(thread->cl_ctx);
             redisFree(thread->sync);
         }
         event_base_free(thread->base);
@@ -2327,7 +2328,7 @@ int maat_feather_init()
     return 0;
 }
 
-int cert_session_init()
+int cert_store_session_init()
 {
     mesa_fiel_stat_init();
 
