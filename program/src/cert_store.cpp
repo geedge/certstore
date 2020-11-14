@@ -117,7 +117,7 @@ int main(int argc, char **argv)
 		signal(signals[i], __signal_handler_cb);
 	}
 
-    cert_store_session_init();
+    cert_store_session_init(CERT_BASIC_CFG);
 
     return 0;
 }

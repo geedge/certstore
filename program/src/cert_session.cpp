@@ -2131,20 +2131,29 @@ void sigproc(int __attribute__((__unused__))sig)
     exit(1);
 }
 
-static int mesa_fiel_stat_init()
+static int mesa_fiel_stat_init(const char *main_profile)
 {
-	int value=0, i=0;
+	int value=0, i=0, prometheus_port =0;
 	char stat_path[128] ={0}, pname[32]={0};
+	char prometheus_url_path[1024] = {0};
 
     struct _initer_addr_t *addr_t = &(cfg_instanec()->addr_t);
 
 	g_FP_instance.favorite=FS_CALC_CURRENT;
 	strcpy(g_FP_instance.histogram_bins, FP_HISTOGRAM_BINS);
 
+	MESA_load_profile_int_def(main_profile, "stat", "statsd_set_prometheus_port", &(prometheus_port), 9001);
+	MESA_load_profile_string_def(main_profile, "stat", "statsd_set_prometheus_url_path", prometheus_url_path, sizeof(prometheus_url_path), "/certstore_prometheus");
+	FS_library_set_prometheus_port(prometheus_port);
+	FS_library_set_prometheus_url_path(prometheus_url_path);
+	FS_library_init();
+
 	screen_stat_handle_t fs=NULL;
 	fs=FS_create_handle();
 	rt_get_pname_by_pid(getpid(), &pname[0]);
 	FS_set_para(fs, APP_NAME, pname, strlen(pname)+1);
+	value=1;
+	FS_set_para(fs, OUTPUT_PROMETHEUS, &value, sizeof(value));
 	value=0;
 	FS_set_para(fs, FLUSH_BY_DATE, &value, sizeof(value));
 	snprintf(stat_path, 128, "%s/fs2_%s.status", "./logs", pname);
@@ -2328,9 +2337,9 @@ int maat_feather_init()
     return 0;
 }
 
-int cert_store_session_init()
+int cert_store_session_init(const char *main_profile)
 {
-    mesa_fiel_stat_init();
+    mesa_fiel_stat_init(main_profile);
 
     maat_feather_init();
 

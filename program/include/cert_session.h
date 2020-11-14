@@ -103,7 +103,7 @@ typedef struct {
 
 } x509_forge_thread;
 
-int cert_store_session_init();
+int cert_store_session_init(const char *main_profile);
 
 void sigproc(int __attribute__((__unused__))sig);
 
