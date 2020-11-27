@@ -691,7 +691,6 @@ X509 *ssl_x509_forge(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey, in
     if(!ssl_key_gen(&key, pkey, public_algo)){
         goto err;
     }
-
 	//subjectname,issuername
 	subject = X509_get_subject_name(origcrt);
 	issuer = X509_get_subject_name(cacrt);
@@ -728,6 +727,8 @@ X509 *ssl_x509_forge(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey, in
 	}
 
     EVP_PKEY_free(key);
+	key=NULL;
+
 //extensions
 	X509V3_CTX ctx;
 	X509V3_set_ctx(&ctx, cacrt, crt, NULL, NULL, 0);
@@ -876,7 +877,8 @@ X509 *ssl_x509_forge(X509 *cacrt, EVP_PKEY *cakey, X509 *origcrt, char *pkey, in
 	return crt;
 errout:
 	X509_free(crt);
-    EVP_PKEY_free(key);
+	if(key)
+    	EVP_PKEY_free(key);
 err:
 	return NULL;
 }
@@ -1373,8 +1375,11 @@ redis_clnt_pdu_send(struct tfe_http_request *request)
     char *sign = NULL, pkey[SG_DATA_SIZE] = {0};
 
     uint64_t expire_time = x509_online_append(&thread->def, request, &sign, pkey, &stack_ca);
-    if (sign == NULL && pkey[0] == '\0')
+    if (sign == NULL || pkey[0] == '\0')
 	{
+		if (request->origin)
+        	X509_free(request->origin);
+		request_destroy(request);
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to sign certificate");
 		evhttp_socket_send_error(request->evh_req, HTTP_NOTFOUND);
 		return xret;
@@ -1739,6 +1744,7 @@ void http_get_cb(struct evhttp_request *evh_req, void *arg)
 	{
 		if (xret == -2)
 		{
+			request_destroy(request);
 			evhttp_send_reply(evh_req, 200, "OK", NULL);
 			goto finish;
 		}
