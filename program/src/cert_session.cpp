@@ -1570,6 +1570,7 @@ static int http_decode_uri(struct evhttp_request *evh_req, struct tfe_http_reque
 	const char *health_check = evhttp_find_header(&params, "health_check");
 	if (health_check)
 	{
+		evhttp_clear_headers(&params);
 		return -2;
 	}
 	const char *keyring_id = evhttp_find_header(&params, "keyring_id");
