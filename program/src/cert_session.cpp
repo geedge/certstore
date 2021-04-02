@@ -624,7 +624,8 @@ int add_ext(X509 *cacrt, X509 *cert, int nid, char *value)
 
 static time_t ASN1_GetTimeT(ASN1_TIME* time)
 {
-    struct tm t;
+    struct tm t; time_t utc_timep;
+
     const char* str = (const char*) time->data;
     size_t i = 0;
 
@@ -655,7 +656,10 @@ static time_t ASN1_GetTimeT(ASN1_TIME* time)
 
     /* Note: we did not adjust the time based on time zone information */
 	setenv("TZ", "UTC", 1);
-    return mktime(&t);
+	utc_timep = mktime(&t);
+	unsetenv("TZ");
+
+	return utc_timep;
 }
 
 void x509_get_private_ecc_key(EC_KEY *key1, char *pubkey)
