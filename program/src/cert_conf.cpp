@@ -123,7 +123,6 @@ static int load_module_config(const char *config)
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Certsotre redis port invalid");
         goto finish;
     }
-
 finish:
     return xret;
 }

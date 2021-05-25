@@ -2015,24 +2015,32 @@ redis_link_detection(uint32_t __attribute__((__unused__)) uid,
     x509_forge_thread *threads = (x509_forge_thread *)argv;
 
     unsigned int thread_nu = cfg_instanec()->thread_nu;
-    for (tid = 0; tid < (int)thread_nu; tid++) {
+    for (tid = 0; tid < (int)thread_nu; tid++)
+	{
         info  = threads + tid;
-        if(info->sync == NULL){
+        if(info->sync == NULL && info->base != NULL)
+		{
 			redisFree(info->sync);
             xret = redis_sync_init(&info->sync);
-            if (xret < 0 || !info->sync){
+            if (xret < 0 || !info->sync)
+			{
                 mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect sync redis failed", tid);
                 continue;
-            }else{
+            }
+			else
+            {
                 mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect sync redis success", tid);
             }
 
 			if(cfg_instanec()->mode)
 			{
-				 xret = redis_rsync_init(info->base, &info->cl_ctx);
-				if (xret < 0 || !info->cl_ctx){
+				xret = redis_rsync_init(info->base, &info->cl_ctx);
+				if (xret < 0 || !info->cl_ctx)
+				{
 				    mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect rsync redis failed", tid);
-				}else{
+				}
+				else
+				{
 				    mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect rsync redis success", tid);
 				}
 			}
