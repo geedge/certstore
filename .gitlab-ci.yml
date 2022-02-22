@@ -1,86 +1,72 @@
-image: "git.mesalab.cn:7443/mesa_platform/build-env:master"
-
 variables:
   GIT_STRATEGY: "clone"
   BUILD_PADDING_PREFIX: /tmp/padding_for_CPACK_RPM_BUILD_SOURCE_DIRS_PREFIX_PREFIX_PREFIX_PREFIX_PREFIX_PREFIX/
   INSTALL_PREFIX: "/opt/tsg/certstore"
   TESTING_VERSION_BUILD: 0
+  BUILD_IMAGE_CENTOS7: "git.mesalab.cn:7443/mesa_platform/build-env:master"
+  BUILD_IMAGE_CENTOS8: "git.mesalab.cn:7443/mesa_platform/build-env:rockylinux"
 
 stages:
 - build
 
-.build_by_travis:
+###############################################################################
+# The script is set to el7 or el8
+###############################################################################
+.build_before_script:
   before_script:
-  - mkdir -p $BUILD_PADDING_PREFIX/$CI_PROJECT_NAMESPACE/
-  - ln -s $CI_PROJECT_DIR $BUILD_PADDING_PREFIX/$CI_PROJECT_PATH
-  - cd $BUILD_PADDING_PREFIX/$CI_PROJECT_PATH
-  - chmod +x ./ci/travis.sh
+    - mkdir -p $BUILD_PADDING_PREFIX/$CI_PROJECT_NAMESPACE/
+    - ln -s $CI_PROJECT_DIR $BUILD_PADDING_PREFIX/$CI_PROJECT_PATH
+    - cd $BUILD_PADDING_PREFIX/$CI_PROJECT_PATH
+    - chmod +x ./ci/travis.sh
+    - yum makecache
+
+.build_by_travis_for_centos7:
+  stage: build
+  image: $BUILD_IMAGE_CENTOS7
+  extends: .build_before_script
   script:
-  - yum makecache
-  - ./ci/travis.sh
-  - cd build
+    - ./ci/travis.sh
   tags:
-  - share
+    - share
 
-branch_build_debug:
+.build_by_travis_for_centos8:
   stage: build
-  extends: .build_by_travis
+  image: $BUILD_IMAGE_CENTOS8
+  extends: .build_before_script
+  script:
+    - ./ci/travis.sh
+  tags:
+    - share
+
+###############################################################################
+# compile use image: centos7
+###############################################################################
+branch_build_debug_for_centos7:
+  extends: .build_by_travis_for_centos7
   variables:
     BUILD_TYPE: Debug
   except:
-    - /^develop.*$/i
-    - /^master.*$/i
+    - /^develop-.*$/i
+    - /^release-.*$/i
     - tags
 
-branch_build_release:
-  stage: build
+branch_build_release_for_centos7:
   variables:
     BUILD_TYPE: RelWithDebInfo
-  extends: .build_by_travis
+  extends: .build_by_travis_for_centos7
   except:
-    - /^develop.*$/i
-    - /^master.*$/i
+    - /^develop-.*$/i
+    - /^release-.*$/i
     - tags
 
-develop_build_debug:
-  stage: build
-  extends: .build_by_travis
+release_build_debug_for_centos7:
   variables:
+    UPLOAD_SYMBOL_FILES: 1
     BUILD_TYPE: Debug
     PACKAGE: 1
-  artifacts:
-    name: "certstore-develop-$CI_COMMIT_REF_NAME-debug"
-    paths:
-      - build/*.rpm
-  only:
-    - /^develop.*$/i
-    - /^master.*$/i
-
-develop_build_release:
-  stage: build
-  extends: .build_by_travis
-  variables:
-    BUILD_TYPE: RelWithDebInfo
-    PACKAGE: 1
-  artifacts:
-    name: "certstore-develop-$CI_COMMIT_REF_NAME-release"
-    paths:
-      - build/*.rpm
-  only:
-    - /^develop.*$/i
-    - /^master.*$/i
-
-
-release_build_release:
-  stage: build
-  variables:
-    BUILD_TYPE: RelWithDebInfo
-    PACKAGE: 1
-    UPLOAD: 1
-    SYMBOL_TARGET: certstore
     PULP3_REPO_NAME: tsg-stable-x86_64.el7
     PULP3_DIST_NAME: tsg-stable-x86_64.el7
-  extends: .build_by_travis
+  extends: .build_by_travis_for_centos7
   artifacts:
     name: "certstore-$CI_COMMIT_REF_NAME-debug"
     paths:
@@ -88,20 +74,69 @@ release_build_release:
   only:
     - tags
 
-release_build_release_devel:
-  stage: build
+release_build_release_for_centos7:
   variables:
     BUILD_TYPE: RelWithDebInfo
-    ENABLE_DEVEL_SWITCH: "ON"
+    UPLOAD_SYMBOL_FILES: 1
     PACKAGE: 1
-    UPLOAD: 1
-    SYMBOL_TARGET: certstore
     PULP3_REPO_NAME: tsg-stable-x86_64.el7
     PULP3_DIST_NAME: tsg-stable-x86_64.el7
-  extends: .build_by_travis
+  extends: .build_by_travis_for_centos7
   artifacts:
     name: "certstore-$CI_COMMIT_REF_NAME-release"
     paths:
       - build/*.rpm
   only:
     - tags
+
+###############################################################################
+# compile use image: centos8
+###############################################################################
+branch_build_debug_for_centos8:
+  extends: .build_by_travis_for_centos8
+  variables:
+    BUILD_TYPE: Debug
+  except:
+    - /^develop-.*$/i
+    - /^release-.*$/i
+    - tags
+
+branch_build_release_for_centos8:
+  variables:
+    BUILD_TYPE: RelWithDebInfo
+  extends: .build_by_travis_for_centos8
+  except:
+    - /^develop-.*$/i
+    - /^release-.*$/i
+    - tags
+
+release_build_debug_for_centos8:
+  variables:
+    UPLOAD_SYMBOL_FILES: 1
+    BUILD_TYPE: Debug
+    PACKAGE: 1
+    PULP3_REPO_NAME: tsg-stable-x86_64.el8
+    PULP3_DIST_NAME: tsg-stable-x86_64.el8
+  extends: .build_by_travis_for_centos8
+  artifacts:
+    name: "certstore-$CI_COMMIT_REF_NAME-debug"
+    paths:
+      - build/*.rpm
+  only:
+    - tags
+
+release_build_release_for_centos8:
+  variables:
+    BUILD_TYPE: RelWithDebInfo
+    UPLOAD_SYMBOL_FILES: 1
+    PACKAGE: 1
+    PULP3_REPO_NAME: tsg-stable-x86_64.el8
+    PULP3_DIST_NAME: tsg-stable-x86_64.el8
+  extends: .build_by_travis_for_centos8
+  artifacts:
+    name: "certstore-$CI_COMMIT_REF_NAME-release"
+    paths:
+      - build/*.rpm
+  only:
+    - tags
+    
