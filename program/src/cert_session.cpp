@@ -1032,7 +1032,10 @@ void keyring_table_free_cb(int __attribute__((__unused__))table_id, MAAT_PLUGIN_
 long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
 {
     if (*ad == NULL)
+   	{
         return;
+	}
+
 	struct pxy_obj_keyring* pxy_obj=(struct pxy_obj_keyring*)(*ad);
 	atomic64_dec(&pxy_obj->ref_cnt);
     if (atomic64_read(&pxy_obj->ref_cnt) == 0)
@@ -1315,7 +1318,7 @@ web_json_record_array_add_string(char **chain)
     if (sample_array == NULL)
         goto finish;
 
-    for(i = 0; chain[i] != '\0'; i++){
+    for(i = 0; chain[i] != NULL; i++){
         json_object_array_add(sample_array, json_object_new_string(chain[i]));
     }
 finish:
