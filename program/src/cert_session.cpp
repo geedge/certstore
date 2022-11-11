@@ -1143,14 +1143,13 @@ static int x509_online_append(struct x509_object_ctx *def, struct tfe_http_reque
                               STACK_OF(X509) **stack_ca)
 {
     X509* x509 = NULL;
-    int is_valid = request->is_valid; int keyring_id = request->keyring_id;
+    int is_valid = 1; int keyring_id = request->keyring_id;
     int expire_time = 0; char *serial = NULL;
     X509 *cacrt = NULL; EVP_PKEY *cakey = NULL;
 	char *v3_ctl=NULL, *public_algo=NULL;
 
     struct config_bucket_t *rte = cfg_instanec();
 
-    if (is_valid == 0 && keyring_id != 0) keyring_id = 0;
     if (is_valid == 1 && keyring_id == 0) keyring_id = 1;
 
     struct pxy_obj_keyring *pxy_obj = get_obj_for_id(keyring_id);
@@ -1159,7 +1158,6 @@ static int x509_online_append(struct x509_object_ctx *def, struct tfe_http_reque
         if (!rte->local_debug)
         {
             if (1==is_valid)  pxy_obj = get_obj_for_id(1);
-            if (0==is_valid)  pxy_obj = get_obj_for_id(0);
 			if (pxy_obj == NULL)
 			{
 				mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Get the default keypair failed, EXIT!!!");
