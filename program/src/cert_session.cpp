@@ -1150,14 +1150,12 @@ static int x509_online_append(struct x509_object_ctx *def, struct tfe_http_reque
 
     struct config_bucket_t *rte = cfg_instanec();
 
-    if (is_valid == 1 && keyring_id == 0) keyring_id = 1;
-
     struct pxy_obj_keyring *pxy_obj = get_obj_for_id(keyring_id);
     if (NULL == pxy_obj)
     {
         if (!rte->local_debug)
         {
-            if (1==is_valid)  pxy_obj = get_obj_for_id(1);
+            pxy_obj = get_obj_for_id(keyring_id);
 			if (pxy_obj == NULL)
 			{
 				mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Get the default keypair failed, EXIT!!!");
