@@ -9,11 +9,7 @@
 #define _CERT_SESSION_H
 
 #include <event2/event_compat.h>
-#include <MESA/MESA_list_queue.h>
-
 #include "rt_sync.h"
-
-
 #include <openssl/opensslv.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>

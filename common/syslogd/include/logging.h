@@ -46,7 +46,7 @@ extern void mesa_logging_print(int log_level, const char *module, const char *ms
 
 #define mesa_runtime_log(level, module, ...)   mesa_log(logging_sc_lid.debug_switch, level, module, __VA_ARGS__)
 
-void cert_store_syslog_init(const char *config, const char * version);
+void load_log_module(const char *config, const char * version);
 void cert_store_log_reconstruction();
 
 #endif

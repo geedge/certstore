@@ -15,14 +15,12 @@
 #include <openssl/x509.h>
 #include <openssl/evp.h>
 
-#include <MESA/Maat_rule.h>
-#include <MESA/MESA_htable.h>
-
 #define CT_PATH_MAX 256
 #define CT_ARRARY_LEN (CT_PATH_MAX/2)
 #define CT_STRING_MAX 1024
 
-struct tfe_http_request{
+struct http_request
+{
 #define DATALEN 128
     int thread_id;
     int is_valid;
@@ -35,7 +33,8 @@ struct tfe_http_request{
     struct evhttp_request *evh_req;
 };
 
-struct pxy_obj_keyring{
+struct pxy_obj_keyring
+{
 	int keyring_id;
     int use_hsm;
     int slot_id;
@@ -52,43 +51,21 @@ struct pxy_obj_keyring{
     STACK_OF(X509) *stack_ca;
 };
 
-struct _initer_addr_t{
-    uint16_t e_port;       /*libevent prot*/
-    uint16_t maat_port;    /*maat redis port*/
-    char maat_ip[16];      /*maat redis ip */
-    int dbindex;           /*maat redis dbindex*/
-
-    uint16_t store_port;   /*store redis port */
-    char store_ip[16];     /*store redis ip*/
-
-    uint16_t statsd_port;
-    char statsd_server[16];
-};
-
-struct ntc_maat_t{
-    unsigned int maat_json_switch;
-    unsigned int effective_interval_s;
-    char info_path[128];
-    char pxy_path[128];
-    char inc_cfg_dir[128];
-    char full_cfg_dir[128];
-};
-
-struct config_bucket_t{
-    Maat_feather_t feather;
+struct cert_store_rt
+{
+    struct maat *instance;
     int table_id;
 	int mode;
-    unsigned int local_debug;
-    unsigned int thread_nu;
-	unsigned int expire_after;
+    int local_debug;
+    int thread_nu;
+	int expire_after;
+    int listen_port;
+    int local_redis_port;
+    char local_redis_ip[32];
     char ca_path[128];
     char uninsec_path[128];
-    struct ntc_maat_t maat_t;
-    struct _initer_addr_t addr_t;
 };
 
-extern struct config_bucket_t *cfg_instanec();
-
-void cert_store_init_config(const char *config);
+extern struct cert_store_rt * g_cert_store;
 
 #endif

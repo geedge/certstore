@@ -13,13 +13,13 @@
 
 #include "rt_string.h"
 #include "rt_common.h"
-#include <cert_conf.h>
+#include <cert_store.h>
 #include <cert_session.h>
 #include "logging.h"
 
 #include <MESA/MESA_prof_load.h>
 
-#define CERT_BASIC_CFG "./conf/cert_store.ini"
+struct cert_store_rt * g_cert_store;
 
 /* VERSION STRING */
 #ifdef TARGET_GIT_VERSION
@@ -39,33 +39,17 @@ enum syslog_display_format{
     FORMAT_SYSLOG
 };
 
-static
-void cert_store_preview ()
+static void cert_store_preview ()
 {
-    struct config_bucket_t *rte = cfg_instanec();
-
     printf("\r\nBasic Configuration of CertStore \n");
-	printf("%30s:%45s\n", "Run Mode", (rte->mode == 1)?"async":"sync");
-    printf("%30s:%45d\n", "The Threads", rte->thread_nu);
-    printf("%30s:%45s\n", "Store Redis Ip", rte->addr_t.store_ip);
-    printf("%30s:%45d\n", "Store Redis Port", rte->addr_t.store_port);
-    printf("%30s:%45s\n", "Maat Redis Ip", rte->addr_t.maat_ip);
-    printf("%30s:%45d\n", "Maat Redis Port", rte->addr_t.maat_port);
-    printf("%30s:%45d\n", "Maat Redis index", rte->addr_t.dbindex);
-    printf("%30s:%45d\n", "Libevent Port", rte->addr_t.e_port);
-    printf("%30s:%45s\n", "Cert Path", rte->ca_path);
-    printf("%30s:%45s\n", "Uninsec cert Path", rte->uninsec_path);
+	printf("%30s:%45s\n", "Run Mode", (g_cert_store->mode == 1)?"async":"sync");
+    printf("%30s:%45d\n", "The Threads", g_cert_store->thread_nu);
+    printf("%30s:%45s\n", "Store Redis Ip", g_cert_store->local_redis_ip);
+    printf("%30s:%45d\n", "Store Redis Port", g_cert_store->local_redis_port);
+    printf("%30s:%45d\n", "Libevent Port", g_cert_store->listen_port);
+    printf("%30s:%45s\n", "Cert Path", g_cert_store->ca_path);
+    printf("%30s:%45s\n", "Uninsec cert Path", g_cert_store->uninsec_path);
     printf("%30s:%45s\n", "Log Directory", logging_sc_lid.run_log_path);
-    printf("%30s:%45s\n", "Table Info", rte->maat_t.info_path);
-    if (rte->maat_t.maat_json_switch == 1){
-        printf("%30s:%45s\n", "Pxy Obj Keyring", rte->maat_t.pxy_path);
-    }
-    if (rte->maat_t.maat_json_switch == 0){
-        printf("%30s:%45d\n", "Scan Interval", rte->maat_t.effective_interval_s);
-        printf("%30s:%45s\n", "Full Cfg Path", rte->maat_t.full_cfg_dir);
-        printf("%30s:%45s\n", "Inc  Cfg Path", rte->maat_t.inc_cfg_dir);
-
-    }
     printf("\r\n");
 }
 
@@ -90,9 +74,39 @@ void __signal_handler_cb(int sig)
 	}
 }
 
+int rt_file_exsit(const char *realpath_file)
+{
+    return (!access(realpath_file, F_OK));
+}
+
+void load_system_config(const char *main_profile)
+{
+    MESA_load_profile_int_def(main_profile, "CONFIG", "thread-nu", &(g_cert_store->thread_nu), 1);
+    MESA_load_profile_int_def(main_profile, "CONFIG", "mode", &(g_cert_store->mode), 0);
+	MESA_load_profile_int_def(main_profile, "CONFIG","expire_after", &(g_cert_store->expire_after), 30);
+	MESA_load_profile_int_def(main_profile, "CONFIG","local_debug", &(g_cert_store->local_debug), 1);
+	MESA_load_profile_int_def(main_profile, "CERTSTORE_REDIS", "port", &(g_cert_store->local_redis_port), 6379);
+	MESA_load_profile_string_def(main_profile, "CERTSTORE_REDIS", "ip", g_cert_store->local_redis_ip, sizeof(g_cert_store->local_redis_ip), "127.0.0.1");
+	MESA_load_profile_int_def(main_profile, "LIBEVENT", "port", &(g_cert_store->listen_port), 9991);
+
+    MESA_load_profile_string_def(main_profile, "CONFIG", "ca_path", g_cert_store->ca_path, sizeof(g_cert_store->ca_path), "");
+    if (!rt_file_exsit(g_cert_store->ca_path))
+	{
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the ca path failed or the (%s) does not exist", g_cert_store->ca_path);
+    }
+
+    MESA_load_profile_string_def(main_profile, "CONFIG", "untrusted_ca_path", g_cert_store->uninsec_path, sizeof(g_cert_store->uninsec_path), "");
+    if (!rt_file_exsit(g_cert_store->uninsec_path))
+	{
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Read the untrusted ca path failed or the (%s) does not exist",g_cert_store->uninsec_path);
+    }
+}
+
 int main(int argc, char **argv)
 {
 	int opt = 0;
+	const char * main_profile = "./conf/cert_store.ini";
+
 	while ((opt = getopt(argc, argv, "v")) != -1)
 	{
 		switch (opt)
@@ -104,9 +118,13 @@ int main(int argc, char **argv)
 				break;
 		}
 	}
-    cert_store_syslog_init(CERT_BASIC_CFG, version());
 
-    cert_store_init_config(CERT_BASIC_CFG);
+	g_cert_store = (struct cert_store_rt *)calloc(1, sizeof(struct cert_store_rt));
+	assert(g_cert_store);
+
+    load_log_module(main_profile, version());
+
+    load_system_config(main_profile);
 
     cert_store_preview();
 
@@ -117,7 +135,7 @@ int main(int argc, char **argv)
 		signal(signals[i], __signal_handler_cb);
 	}
 
-    cert_store_session_init(CERT_BASIC_CFG);
+    cert_store_session_init(main_profile);
 
     return 0;
 }

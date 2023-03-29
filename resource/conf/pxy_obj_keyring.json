@@ -1,81 +1,13 @@
 {
-    "compile_table": "COMPILE",
-    "group_table": "GROUP",
-    "rules": [
-        {
-            "compile_id": 123,
-            "service": 1,
-            "action": 1,
-            "do_blacklist": 1,
-            "do_log": 1,
-            "effective_range": 0,
-            "user_region": "escaped\\bdata:have\\ba\\bspace\\band\\ba\\b\\&\\bsymbol.",
-            "is_valid": "yes",
-            "groups": [
-                {
-                    "group_name": "IP_group",
-                    "regions": [
-                        {
-                            "table_name": "IP_CONFIG",
-                            "table_type": "ip",
-                            "table_content": {
-                                "addr_type": "ipv4",
-                                "src_ip": "10.0.6.201",
-                                "mask_src_ip": "255.255.0.0",
-                                "src_port": "0",
-                                "mask_src_port": "65535",
-                                "dst_ip": "0.0.0.0",
-                                "mask_dst_ip": "255.255.255.255",
-                                "dst_port": "0",
-                                "mask_dst_port": "65535",
-                                "protocol": 6,
-                                "direction": "double"
-                            }
-                        },
-                        {
-                            "table_name": "IP_CONFIG",
-                            "table_type": "ip",
-                            "table_content": {
-                                "addr_type": "ipv6",
-                                "src_ip": "2001:da8:205:1::101",
-                                "mask_src_ip": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:0000",
-                                "src_port": "0",
-                                "mask_src_port": "65535",
-                                "dst_ip": "0::0",
-                                "mask_dst_ip": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
-                                "dst_port": "0",
-                                "mask_dst_port": "65535",
-                                "protocol": 6,
-                                "direction": "double"
-                            }
-                        }
-                    ]
-                },
-                {
-                    "group_name": "Untitled",
-                    "regions": [
-                        {
-                            "table_name": "HTTP_URL",
-                            "table_type": "string",
-                            "table_content": {
-                                "keywords": "abckkk&123",
-                                "expr_type": "and",
-                                "match_method": "sub",
-                                "format": "uncase plain"
-                            }
-                        }
-                    ]
-                }
-            ]
-        }
-    ],
+	"compile_table": "PXY_CTRL_COMPILE",
+    "group2compile_table": "GROUP_COMPILE_RELATION",
+    "group2group_table": "GROUP_GROUP_RELATION",
     "plugin_table": [
         {
             "table_name": "PXY_PROFILE_KEYRING",
 			  "table_content": [
                 "0\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-v3-untrust-ca.pem\t/home/fengweihao/tool/test_cert/root/tango-ca-v3-untrust-ca.pem\t0\trsa1024\tNULL\t1\t1\t2019112101\t",
 				"11\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem\t//home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem\t0\trsa1024\tNULL\t0\t1\t2019112102\t",
-				
 				"1\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-key.pem\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-cer.pem\t24\trsa2048\tNULL\t0\t1\t20191121990\t",
 				"3\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-key.pem\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-cer.pem\t30\trsa4096\tNULL\t1\t1\t2019112102\t",
 				"9\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-key.pem\t/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-cer.pem\t30\trsa1024\tNULL\t1\t1\t2019112104\t",

@@ -36,15 +36,12 @@ void cert_store_log_reconstruction()
 	MESA_handle_runtime_log_reconstruction(NULL);
 }
 
-void cert_store_syslog_init(const char *config, const char * version)
+void load_log_module(const char *config, const char * version)
 {
 	struct breakpad_instance *breakpad;
 
-    MESA_load_profile_int_def(config, (const char *)"SYSTEM",(const char *)"DEBUG_SWITCH",
-                              &logging_sc_lid.debug_switch, 1);
-    MESA_load_profile_string_def(config, (const char *)"SYSTEM",(const char *)"RUN_LOG_PATH",
-	 							logging_sc_lid.run_log_path, 128, "conf/zlog.conf");
-
+    MESA_load_profile_int_def(config, (const char *)"SYSTEM",(const char *)"DEBUG_SWITCH", &logging_sc_lid.debug_switch, 1);
+    MESA_load_profile_string_def(config, (const char *)"SYSTEM",(const char *)"RUN_LOG_PATH", logging_sc_lid.run_log_path, 128, "conf/zlog.conf");
 	if (0 != MESA_handle_runtime_log_creation(logging_sc_lid.run_log_path))
 	{
 		fprintf(stderr, "Create log runtime_log_handle error, init failed\n");

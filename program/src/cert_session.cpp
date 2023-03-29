@@ -16,7 +16,6 @@
 #include "rt_string.h"
 #include "rt_common.h"
 #include "rt_stdlib.h"
-#include "rt_file.h"
 #include "rt_time.h"
 #include "rt_tmr.h"
 #include "json.h"
@@ -38,12 +37,11 @@
 #include <event2/buffer.h>
 
 #include <async.h>
-#include <MESA/Maat_rule.h>
+#include <MESA/maat.h>
 #include <MESA/field_stat2.h>
 #include <MESA/MESA_prof_load.h>
-#include <MESA/MESA_htable.h>
 
-#include "cert_conf.h"
+#include "cert_store.h"
 #include "libevent.h"
 #include "cert_session.h"
 #include "logging.h"
@@ -506,22 +504,6 @@ finish:
     return pkey;
 }
 
-static void key_ring_free(void *data)
-{
-    struct pxy_obj_keyring *pxy_obj = NULL;
-    pxy_obj = (struct pxy_obj_keyring *)data;
-
-    X509_free(pxy_obj->issuer);
-    EVP_PKEY_free(pxy_obj->key);
-}
-
-void key_ring_list_destroy(MESA_htable_handle *htable)
-{
-    MESA_htable_destroy(*htable, key_ring_free);
-    *htable = NULL;
-    return;
-}
-
 void uuid_squeeze(char *s,int c)
 {
     int i,j;
@@ -942,7 +924,7 @@ finish:
 	return x509;
 }
 
-void request_destroy(struct tfe_http_request *request)
+void request_destroy(struct http_request *request)
 {
 	if (request->odata)
 	{
@@ -958,25 +940,18 @@ void request_destroy(struct tfe_http_request *request)
 	request = NULL;
 }
 
-static
-int redis_rsync_init(struct event_base *base, struct redisAsyncContext **cl_ctx)
+static int redis_async_connect(struct event_base *base, struct redisAsyncContext **cl_ctx)
 {
-    int xret = -1;
-    struct config_bucket_t *redis = cfg_instanec();
-
-    *cl_ctx = redisAsyncConnect(redis->addr_t.store_ip, redis->addr_t.store_port);
-	if((*cl_ctx)->err )	{
+    *cl_ctx = redisAsyncConnect(g_cert_store->local_redis_ip, g_cert_store->local_redis_port);
+	if((*cl_ctx)->err )
+	{
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Redis Connect error : %s", (*cl_ctx)->errstr);
-		goto finish;
+		return -1;
 	}
 	redisLibeventAttach((*cl_ctx), base);
 	redisAsyncSetConnectCallback((*cl_ctx), connectCallback);
 	redisAsyncSetDisconnectCallback((*cl_ctx), disconnectCallback);
-
-    xret = 0;
-
-finish:
-	return xret;
+	return 0;
 }
 
 static int
@@ -1020,7 +995,7 @@ redis_reget_callback(redisAsyncContext __attribute__((__unused__))*cl_ctx,
 {
     redisReply *reply              = (redisReply*)r;
 
-    struct tfe_http_request *request      = (struct tfe_http_request *)privdata;
+    struct http_request *request      = (struct http_request *)privdata;
 
     struct evhttp_request *evh_req = request->evh_req;
     evhttp_socket_send(evh_req, reply->str);
@@ -1028,14 +1003,12 @@ redis_reget_callback(redisAsyncContext __attribute__((__unused__))*cl_ctx,
     return;
 }
 
-void keyring_table_free_cb(int __attribute__((__unused__))table_id, MAAT_PLUGIN_EX_DATA* ad,
-long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
+void keyring_table_free_cb(int table_id, void **ad, long argl, void *argp)
 {
     if (*ad == NULL)
    	{
         return;
 	}
-
 	struct pxy_obj_keyring* pxy_obj=(struct pxy_obj_keyring*)(*ad);
 	atomic64_dec(&pxy_obj->ref_cnt);
     if (atomic64_read(&pxy_obj->ref_cnt) == 0)
@@ -1128,18 +1101,13 @@ finish:
 static struct pxy_obj_keyring* get_obj_for_id(int keyring_id)
 {
 	struct pxy_obj_keyring *pxy_obj=NULL;
-
-    struct config_bucket_t *rte = cfg_instanec();
-
 	char cfg_id_str[16] = {0};
 	snprintf(cfg_id_str, sizeof(cfg_id_str), "%d", keyring_id);
-
-	int tables_id = rte->table_id;
-	pxy_obj = (struct pxy_obj_keyring*)Maat_plugin_get_EX_data(rte->feather, tables_id, (const char*)cfg_id_str);
+	pxy_obj = (struct pxy_obj_keyring*)maat_plugin_table_get_ex_data(g_cert_store->instance, g_cert_store->table_id, cfg_id_str);
 	return pxy_obj;
 }
 
-static int x509_online_append(struct x509_object_ctx *def, struct tfe_http_request *request, char **sign, char *pkey,
+static int x509_online_append(struct x509_object_ctx *def, struct http_request *request, char **sign, char *pkey,
                               STACK_OF(X509) **stack_ca)
 {
     X509* x509 = NULL;
@@ -1148,12 +1116,10 @@ static int x509_online_append(struct x509_object_ctx *def, struct tfe_http_reque
     X509 *cacrt = NULL; EVP_PKEY *cakey = NULL;
 	char *v3_ctl=NULL, *public_algo=NULL;
 
-    struct config_bucket_t *rte = cfg_instanec();
-
     struct pxy_obj_keyring *pxy_obj = get_obj_for_id(keyring_id);
     if (NULL == pxy_obj)
     {
-        if (!rte->local_debug)
+        if (!g_cert_store->local_debug)
         {
             pxy_obj = get_obj_for_id(keyring_id);
 			if (pxy_obj == NULL)
@@ -1170,7 +1136,7 @@ static int x509_online_append(struct x509_object_ctx *def, struct tfe_http_reque
         {
             cacrt = (is_valid == 1) ? def->root : def->insec_root;
             cakey  = (is_valid == 1) ? def->key  : def->insec_key;
-            expire_time = cfg_instanec()->expire_after;
+            expire_time = g_cert_store->expire_after;
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Warning: Use local keypair, sign cert!!!");
             goto modify;
         }
@@ -1180,7 +1146,7 @@ static int x509_online_append(struct x509_object_ctx *def, struct tfe_http_reque
 	{
 		cacrt = (is_valid == 1) ? def->root : def->insec_root;
 		cakey  = (is_valid == 1) ? def->key  : def->insec_key;
-		expire_time = cfg_instanec()->expire_after;
+		expire_time = g_cert_store->expire_after;
 		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Warning: HSM is not supported, use local keypair, sign cert!!!");
 		goto modify;
 	}
@@ -1236,7 +1202,7 @@ static char readBytes(char *str)
 }
 
 static void
-redis_sync_reget_callback(struct tfe_http_request *request, struct redisContext *sync)
+redis_sync_reget_callback(struct http_request *request, struct redisContext *sync)
 {
 	struct evhttp_request *evh_req = request->evh_req;
 
@@ -1261,12 +1227,11 @@ free:
 }
 
 static int
-rediSyncCommand(redisContext *sync, struct tfe_http_request *request, char *odata, int expire_after)
+rediSyncCommand(redisContext *sync, struct http_request *request, char *odata, int expire_after)
 {
     int xret = -1;
     redisReply *reply;
 
-	struct config_bucket_t *config = cfg_instanec();
     x509_forge_thread *thread        = threads + request->thread_id;
     struct evhttp_request *evh_req = request->evh_req;
 
@@ -1283,7 +1248,7 @@ rediSyncCommand(redisContext *sync, struct tfe_http_request *request, char *odat
         case '$' :
             mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Writing data(%s) to redis failed", request->rkey);
 			fp_stat_latency(request->create_time, KEYPAIR_ACTION_SQL);
-			if (config->mode){
+			if (g_cert_store->mode){
             	redisAsyncCommand(thread->cl_ctx, redis_reget_callback, request, "GET %s", request->rkey);
 			}else{
 				redis_sync_reget_callback(request, sync);
@@ -1369,7 +1334,7 @@ static int web_json_table_add(char *privatekey, char *sign, char **digital_certi
 }
 
 static int
-redis_clnt_pdu_send(struct tfe_http_request *request)
+redis_clnt_pdu_send(struct http_request *request)
 {
 #define MAX_CHAIN_LEN 6
     int xret = -1, i = 0;
@@ -1418,7 +1383,7 @@ finish:
     return xret;
 }
 
-static int redis_clnt_send(struct tfe_http_request *request, redisReply *reply)
+static int redis_clnt_send(struct http_request *request, redisReply *reply)
 {
     int xret                       = -1;
 
@@ -1441,7 +1406,7 @@ void redis_get_callback(redisAsyncContext __attribute__((__unused__))*c, void *r
     int __attribute__((__unused__))xret = -1;
 
 	redisReply *reply              = (redisReply*)r;
-    struct tfe_http_request *request      = (struct tfe_http_request *)privdata;
+    struct http_request *request      = (struct http_request *)privdata;
 
     switch(reply->type){
         case REDIS_REPLY_STRING:
@@ -1559,7 +1524,7 @@ void _urldecode(char url[])
     free(res);
 }
 
-static int http_decode_uri(struct evhttp_request *evh_req, struct tfe_http_request *request)
+static int http_decode_uri(struct evhttp_request *evh_req, struct http_request *request)
 {
 	int rv = 0;
     struct evkeyvalq params;
@@ -1641,7 +1606,7 @@ finish:
 }
 
 static int
-redis_sync_command(struct tfe_http_request *request,  struct redisContext __attribute__((__unused__))*c)
+redis_sync_command(struct http_request *request,  struct redisContext __attribute__((__unused__))*c)
 {
 	int xret = -1;
 	redisReply *reply;
@@ -1675,7 +1640,7 @@ finish:
 	return xret;
 }
 
-static int get_x509_msg(struct tfe_http_request *request, char *input, ssize_t inputlen)
+static int get_x509_msg(struct http_request *request, char *input, ssize_t inputlen)
 {
 	request->origin = x509_get_ca_from_msg(input, inputlen + 1);
     if (request->origin == NULL){
@@ -1693,7 +1658,7 @@ static int get_x509_msg(struct tfe_http_request *request, char *input, ssize_t i
 	return 0;
 }
 
-static int get_keypair_cache(x509_forge_thread *info, struct tfe_http_request *request, int mode)
+static int get_keypair_cache(x509_forge_thread *info, struct http_request *request, int mode)
 {
 	int xret = 0;
 
@@ -1728,17 +1693,16 @@ static int get_keypair_cache(x509_forge_thread *info, struct tfe_http_request *r
 void http_get_cb(struct evhttp_request *evh_req, void *arg)
 {
     int xret = -1;
-	struct tfe_http_request *request = NULL;
+	struct http_request *request = NULL;
 	struct evbuffer * evbuf_body = NULL;
 	char *input = NULL; ssize_t inputlen=0;
     x509_forge_thread *info = (x509_forge_thread *)arg;
-    struct config_bucket_t *config = cfg_instanec();
 
 	if (evhttp_request_get_command(evh_req) != EVHTTP_REQ_POST) {
 		mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "FAILED (post type)");
 		goto error;
 	}
-	request = (struct tfe_http_request *) kmalloc (sizeof(struct tfe_http_request), MPF_CLR, -1);
+	request = (struct http_request *) kmalloc (sizeof(struct http_request), MPF_CLR, -1);
 	request->keyring_id = 0;
 	request->thread_id  = info->id;
 	request->evh_req    = evh_req;
@@ -1774,7 +1738,7 @@ void http_get_cb(struct evhttp_request *evh_req, void *arg)
 	}
 	FS_operate(g_FP_instance.handle, g_FP_instance.line_ids[KEYPAIR_ACTION_REQ], 0, FS_OP_ADD, 1);
 
-	xret = get_keypair_cache(info, request, config->mode);
+	xret = get_keypair_cache(info, request, g_cert_store->mode);
 	if (xret >= 0)
 	{
 		goto finish;
@@ -1785,72 +1749,70 @@ finish:
     return;
 }
 
-int redis_sync_init(struct redisContext **c)
+int redis_sync_connect(struct redisContext **c)
 {
-    int xret = -1;
-    struct config_bucket_t *redis = cfg_instanec();
-
-    struct timeval timeout = { 1, 500000 }; // 1.5 seconds
-
-    *c = redisConnectWithTimeout(redis->addr_t.store_ip, redis->addr_t.store_port, timeout);
-    if (*c == NULL || (*c)->err) {
+	struct timeval timeout = { 1, 500000 }; // 1.5 seconds
+    *c = redisConnectWithTimeout(g_cert_store->local_redis_ip, g_cert_store->local_redis_port, timeout);
+    if (*c == NULL || (*c)->err)
+	{
         if (*c) {
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Sync connection error: %s", (*c)->errstr);
             redisFree(*c);
             *c = NULL;
         } else {
-            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Connection error: can't allocate redis context");
+            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Connection error: can't allocate g_cert_store context");
         }
+        return -1;;
+    }
+    return 0;
+}
+
+int local_redis_connect(struct event_base *base, x509_forge_thread *thread)
+{
+	int ret = -1;
+	ret = redis_sync_connect(&thread->sync);
+	if (ret < 0 || !thread->sync)
+	{
+		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Initialize the sync redis connection is failure");
+	}
+
+	if(g_cert_store->mode==0)
+	{
+		return ret;
+	}
+	ret = redis_async_connect(base, &thread->cl_ctx);
+	if (ret < 0 || !thread->cl_ctx)
+	{
+	   mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Initialize the redis connection is failure");
+	}
+	return ret;
+}
+
+int load_default_ca(x509_forge_thread *thread)
+{
+	int ret=0;
+
+	if(g_cert_store->local_debug == 0)
+	{
+		return 0;
+	}
+    ret = x509_key_pair_init(g_cert_store->ca_path, &thread->def.key, &thread->def.root);
+    if (ret < 0 || !(thread->def.key) || !(thread->def.root))
+	{
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the x509 certificate");
         goto finish;
     }
-    xret = 0;
-finish:
-    return xret;
-}
-
-static int
-worker_private_init(struct event_base *base, x509_forge_thread *thread)
-{
-    int xret = -1;
-    struct config_bucket_t *config = cfg_instanec();
-
-    /* Initialize the redis connection*/
-	if (config->mode)
+    ret = x509_key_pair_init(g_cert_store->uninsec_path, &thread->def.insec_key, &thread->def.insec_root);
+    if (ret < 0 || !(thread->def.key) || !(thread->def.root))
 	{
-		xret = redis_rsync_init(base, &thread->cl_ctx);
-		if (xret < 0 || !thread->cl_ctx){
-		    mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Initialize the redis connection is failure");
-		}
-	}
-    xret = redis_sync_init(&thread->sync);
-    if (xret < 0 || !thread->sync)
-	{
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Initialize the sync redis connection is failure");
-    }
-
-    if (config->local_debug)
-    {
-        /* Initialize the X509 CA*/
-        xret = x509_key_pair_init(config->ca_path, &thread->def.key, &thread->def.root);
-        if (xret < 0 || !(thread->def.key) || !(thread->def.root))
-		{
-            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the x509 certificate");
-            goto finish;
-        }
-
-        /* Initialize the insec CA*/
-        xret = x509_key_pair_init(config->uninsec_path, &thread->def.insec_key, &thread->def.insec_root);
-        if (xret < 0 || !(thread->def.key) || !(thread->def.root))
-		{
-            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the insec x509 certificate");
-            goto finish;
-        }
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to initialize the insec x509 certificate");
+        goto finish;
     }
 finish:
-    return xret;
+	return ret;
 }
 
-static void *pthread_worker_libevent(void *arg)
+static void *keyring_work_thread_run(void *arg)
 {
     int xret                          = -1;
 	struct evhttp_bound_socket *bound = NULL;
@@ -1867,9 +1829,9 @@ static void *pthread_worker_libevent(void *arg)
 		goto error;
 	}
     thread_ctx->base = base;
+	local_redis_connect(base, thread_ctx);
 
-    /* Context initialization */
-    xret = worker_private_init(base, thread_ctx);
+	xret = load_default_ca(thread_ctx);
     if (xret < 0)
 	{
         goto error;
@@ -1878,8 +1840,7 @@ static void *pthread_worker_libevent(void *arg)
 
     bound = evhttp_accept_socket_with_handle(http, thread_ctx->accept_fd);
     if (bound != NULL) {
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Bound(%p) to port %d - Awaiting connections ... ", bound,
-                        cfg_instanec()->addr_t.e_port);
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Bound(%p) to port %d - Awaiting connections ... ", bound, g_cert_store->listen_port);
 	}
 	mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Work thread %u is run...", thread_ctx->id);
 
@@ -2004,23 +1965,20 @@ err:
 	return fd;
 }
 
-static void
-redis_link_detection(uint32_t __attribute__((__unused__)) uid,
-                    int __attribute__((__unused__))argc,
-                    char **argv)
+void redis_link_detection(uint32_t uid, int argc, char **argv)
 {
     int tid = 0, xret = 0;
     x509_forge_thread *info   = NULL;
     x509_forge_thread *threads = (x509_forge_thread *)argv;
 
-    unsigned int thread_nu = cfg_instanec()->thread_nu;
+    unsigned int thread_nu = g_cert_store->thread_nu;
     for (tid = 0; tid < (int)thread_nu; tid++)
 	{
         info  = threads + tid;
         if(info->sync == NULL && info->base != NULL)
 		{
 			redisFree(info->sync);
-            xret = redis_sync_init(&info->sync);
+            xret = redis_sync_connect(&info->sync);
             if (xret < 0 || !info->sync)
 			{
                 mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect sync redis failed", tid);
@@ -2031,36 +1989,36 @@ redis_link_detection(uint32_t __attribute__((__unused__)) uid,
                 mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect sync redis success", tid);
             }
 
-			if(cfg_instanec()->mode)
+			if(g_cert_store->mode == 0)
 			{
-				xret = redis_rsync_init(info->base, &info->cl_ctx);
-				if (xret < 0 || !info->cl_ctx)
-				{
-				    mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect rsync redis failed", tid);
-				}
-				else
-				{
-				    mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect rsync redis success", tid);
-				}
+				continue;
+			}
+			xret = redis_async_connect(info->base, &info->cl_ctx);
+			if (xret < 0 || !info->cl_ctx)
+			{
+			    mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect rsync redis failed", tid);
+			}
+			else
+			{
+			    mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "[%d]trying to connect rsync redis success", tid);
 			}
         }
     }
 }
 
-static int keyring_server_init()
+static int keyring_server_init(const char *main_profile)
 {
-    int xret                  = -1;
+	int xret=-1;
     unsigned int tid          = 0;
     x509_forge_thread *thread   = NULL;
 	uint32_t tm_link_detetion = 0;
-
-    unsigned int thread_nu    = cfg_instanec()->thread_nu;
+    unsigned int thread_nu = g_cert_store->thread_nu;
 
     /* Create a new evhttp object to handle requests. */
     struct sockaddr_in sin;
     memset(&sin, 0, sizeof(struct sockaddr_in));
     sin.sin_family = AF_INET;
-    sin.sin_port   = htons(cfg_instanec()->addr_t.e_port);
+    sin.sin_port   = htons(g_cert_store->listen_port);
     evutil_socket_t accept_fd = evhttp_listen_socket_byuser((struct sockaddr*)&sin, sizeof(struct sockaddr_in), LEV_OPT_REUSEABLE_PORT|LEV_OPT_CLOSE_ON_FREE, -1);
     if (accept_fd < 0)
 	{
@@ -2079,10 +2037,9 @@ static int keyring_server_init()
     for (tid = 0; tid < thread_nu; tid++)
 	{
         thread            = threads + tid;
-
         thread->id        = tid;
         thread->accept_fd = accept_fd;
-        thread->routine   = pthread_worker_libevent;
+        thread->routine   = keyring_work_thread_run;
 
         if (pthread_create(&thread->pid, thread->attr, thread->routine, &threads[tid])){
             mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "%s", strerror(errno));
@@ -2129,12 +2086,10 @@ rt_get_pname_by_pid(pid_t pid, char *task_name)
 
 void sigproc(int __attribute__((__unused__))sig)
 {
-    unsigned int tid            = 0;
+    int tid            = 0;
     x509_forge_thread *thread     = NULL;
 
-    struct config_bucket_t *rte = cfg_instanec();
-
-    for (tid = 0; tid <  rte->thread_nu; tid++)
+    for (tid = 0; tid < g_cert_store->thread_nu; tid++)
 	{
         thread = threads + tid;
         if (thread->sync)
@@ -2146,22 +2101,30 @@ void sigproc(int __attribute__((__unused__))sig)
     }
     kfree(threads);
 
+	if(g_cert_store->instance)
+	{
+		maat_free(g_cert_store->instance);
+	}
+	kfree(g_cert_store);
+
     exit(1);
 }
 
-static int mesa_fiel_stat_init(const char *main_profile)
+static int kerying_fs_stat_init(const char *main_profile)
 {
 	int value=0, i=0, prometheus_port =0;
 	char stat_path[128] ={0}, pname[32]={0};
 	char prometheus_url_path[1024] = {0};
+    char statsd_server[32];	int statsd_port;
 
-    struct _initer_addr_t *addr_t = &(cfg_instanec()->addr_t);
+    MESA_load_profile_int_def(main_profile, "stat", "statsd_port", &(statsd_port), 8126);
+	MESA_load_profile_string_def(main_profile, "stat", "statsd_server", statsd_server, sizeof(statsd_server), "");
+	MESA_load_profile_int_def(main_profile, "stat", "statsd_set_prometheus_port", &(prometheus_port), 9001);
+	MESA_load_profile_string_def(main_profile, "stat", "statsd_set_prometheus_url_path", prometheus_url_path, sizeof(prometheus_url_path), "/certstore_prometheus");
 
 	g_FP_instance.favorite=FS_CALC_CURRENT;
 	strcpy(g_FP_instance.histogram_bins, FP_HISTOGRAM_BINS);
 
-	MESA_load_profile_int_def(main_profile, "stat", "statsd_set_prometheus_port", &(prometheus_port), 9001);
-	MESA_load_profile_string_def(main_profile, "stat", "statsd_set_prometheus_url_path", prometheus_url_path, sizeof(prometheus_url_path), "/certstore_prometheus");
 	FS_library_set_prometheus_port(prometheus_port);
 	FS_library_set_prometheus_url_path(prometheus_url_path);
 	FS_library_init();
@@ -2182,10 +2145,10 @@ static int mesa_fiel_stat_init(const char *main_profile)
 	FS_set_para(fs, CREATE_THREAD, &value, sizeof(value));
 	value=2;
 	FS_set_para(fs, STAT_CYCLE, &value, sizeof(value));
-	if(strlen(addr_t->statsd_server)>0 && addr_t->statsd_port!=0)
+	if(strlen(statsd_server)>0 && statsd_port!=0)
 	{
-		FS_set_para(fs, STATS_SERVER_IP, addr_t->statsd_server, strlen(addr_t->statsd_server)+1);
-		FS_set_para(fs, STATS_SERVER_PORT, &(addr_t->statsd_port), sizeof(addr_t->statsd_port));
+		FS_set_para(fs, STATS_SERVER_IP, statsd_server, strlen(statsd_server)+1);
+		FS_set_para(fs, STATS_SERVER_PORT, &(statsd_port), sizeof(statsd_port));
 	}
 	FS_set_para(fs, HISTOGRAM_GLOBAL_BINS, g_FP_instance.histogram_bins, strlen(g_FP_instance.histogram_bins)+1);
 
@@ -2213,8 +2176,7 @@ static int mesa_fiel_stat_init(const char *main_profile)
     return 0;
 }
 
-void keyring_table_new_cb(int __attribute__((__unused__))table_id, const char  __attribute__((__unused__))*key,
-const char* table_line, MAAT_PLUGIN_EX_DATA* ad, long __attribute__((__unused__))argl, void __attribute__((__unused__))* argp)
+void keyring_table_new_cb(int table_id, const char *key, const char* table_line, void **ad, long argl, void * argp)
 {
     char profile_name[CT_ARRARY_LEN]={0};
     char private_file[CT_STRING_MAX] = {0}, public_file[CT_STRING_MAX]={0};
@@ -2268,8 +2230,7 @@ finish:
 	return;
 }
 
-void keyring_table_dup_cb(int __attribute__((__unused__))table_id,	MAAT_PLUGIN_EX_DATA *to, MAAT_PLUGIN_EX_DATA *from,
-long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
+void keyring_table_dup_cb(int table_id,	void **to, void **from, long argl, void *argp)
 {
 	struct pxy_obj_keyring* pxy_obj=(struct pxy_obj_keyring*)(*from);
     if(pxy_obj==NULL)
@@ -2281,87 +2242,127 @@ long __attribute__((__unused__))argl, void __attribute__((__unused__))*argp)
     *((struct pxy_obj_keyring**)to)=pxy_obj;
 }
 
-int maat_table_ex_init(const char* table_name,
-					   Maat_plugin_EX_new_func_t* new_func,
-					   Maat_plugin_EX_free_func_t* free_func,
-					   Maat_plugin_EX_dup_func_t* dup_func)
+#define MAAT_INPUT_JSON			1
+#define MAAT_INPUT_REDIS    	2
+#define MAAT_INPUT_FILE        	0
+
+struct maat *create_maat_feather(const char * main_profile)
 {
-	int table_id = 0;
+	struct maat *target=NULL;
+	int input_mode = 0;
+	int ret = 0, effect_interval = 60;
+	int redis_db_idx = 0, deferred_load_on = 0;
+	char table_info[128]={0}, inc_cfg_dir[128]={0}, ful_cfg_dir[128]={0};
+	char json_cfg_file[128] = {0};
+	char redis_server[128]={0},redis_port_range[128]={0};
+	int redis_port_begin=0, redis_port_end=0;
+	int redis_port_select=0;
 
-    struct config_bucket_t *rte = cfg_instanec();
+	MESA_load_profile_int_def(main_profile,    "MAAT", "maat_json_switch", &(input_mode), 0);
+	MESA_load_profile_string_def(main_profile, "MAAT", "table_info", table_info, sizeof(table_info), "");
+    MESA_load_profile_int_def(main_profile,    "MAAT", "effective_interval", &(effect_interval), 60);
+	MESA_load_profile_string_def(main_profile, "MAAT", "pxy_obj_keyring", json_cfg_file, sizeof(json_cfg_file), "");
+	MESA_load_profile_string_def(main_profile, "MAAT", "inc_cfg_dir", inc_cfg_dir, sizeof(inc_cfg_dir), "");
+	MESA_load_profile_string_def(main_profile, "MAAT", "full_cfg_dir", ful_cfg_dir, sizeof(ful_cfg_dir), "");
+    MESA_load_profile_int_def(main_profile,    "MAAT", "deferred_load_on", &(deferred_load_on), 0);
 
-	table_id= rte->table_id = Maat_table_register(rte->feather, table_name);
+	MESA_load_profile_string_def(main_profile, "MAAT_REDIS", "ip", redis_server, sizeof(redis_server), "");
+    MESA_load_profile_string_def(main_profile, "MAAT_REDIS", "port", redis_port_range, sizeof(redis_server), "6379");
+    MESA_load_profile_int_def(main_profile,    "MAAT_REDIS", "dbindex", &(redis_db_idx), 0);
+
+	ret=sscanf(redis_port_range,"%d-%d", &redis_port_begin, &redis_port_end);
+	if(ret==1)
+	{
+		redis_port_select=redis_port_begin;
+	}
+	else if(ret==2)
+	{
+		srand(time(NULL));
+		redis_port_select=redis_port_begin+rand()%(redis_port_end-redis_port_begin);
+	}
+	else
+	{
+		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Invalid redis port range %s, MAAT init failed.", redis_port_range);
+	}
+
+	effect_interval *= 1000;//convert s to ms
+	assert(strlen(inc_cfg_dir) != 0 || strlen(ful_cfg_dir) != 0 || strlen(redis_server)!=0 || strlen(json_cfg_file)!=0);
+
+    struct maat_options *opts = maat_options_new();
+	maat_options_set_instance_name(opts, "certstore");
+	maat_options_set_caller_thread_number(opts, g_cert_store->thread_nu);
+	maat_options_set_logger(opts, "logs/maat.log", LOG_LEVEL_TRACE);
+	switch (input_mode)
+	{
+		case MAAT_INPUT_FILE:
+			maat_options_set_iris(opts, ful_cfg_dir, inc_cfg_dir);
+			break;
+		case MAAT_INPUT_JSON:
+			maat_options_set_json_file(opts, json_cfg_file);
+			break;
+		case MAAT_INPUT_REDIS:
+			maat_options_set_redis(opts, redis_server, redis_port_select, redis_db_idx);
+			break;
+		default: mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Invalid MAAT Input Mode: %d.", input_mode);
+			goto error_out;
+			break;
+	}
+
+	if (deferred_load_on)
+	{
+		maat_options_set_deferred_load_on(opts);
+	}
+	maat_options_set_rule_effect_interval_ms(opts, effect_interval);
+	maat_options_set_foreign_cont_dir(opts, "./foreign_files/");
+
+	target = maat_new(opts, table_info);
+	if (!target)
+	{
+		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "%s MAAT init failed.", __FUNCTION__);
+		goto error_out;
+	}
+    maat_options_free(opts);
+	return target;
+
+error_out:
+	maat_options_free(opts);
+	return NULL;
+}
+
+int kerying_profile_init(const char * main_profile)
+{
+	int table_id=0;
+
+	g_cert_store->instance = create_maat_feather(main_profile);
+	if(!g_cert_store->instance)
+	{
+		goto finish;
+	}
+	g_cert_store->table_id=maat_get_table_id(g_cert_store->instance, "PXY_PROFILE_KEYRING");
+	if(g_cert_store->table_id<0)
+	{
+		goto finish;
+	}
+	table_id=maat_plugin_table_ex_schema_register(g_cert_store->instance, g_cert_store->table_id, keyring_table_new_cb,keyring_table_free_cb,
+ 						             			  keyring_table_dup_cb, 0, NULL);
 	if(table_id<0)
 	{
 		goto finish;
 	}
-	table_id=Maat_plugin_EX_register(rte->feather,
- 						             table_id,
- 						             new_func,free_func,
- 						             dup_func,NULL,0,NULL);
+	return 0;
 finish:
-	return table_id;
-}
-
-int maat_feather_init()
-{
-    int ret = -1;
-    Maat_feather_t feather = NULL;
-	int scan_interval_ms = 1000;
-
-    struct config_bucket_t *rte = cfg_instanec();
-    struct ntc_maat_t *maat_t = &rte->maat_t;
-
-    int effective_interval_ms = maat_t->effective_interval_s * 1000;
-
-	feather = Maat_feather(rte->thread_nu, maat_t->info_path, logging_sc_lid.run_log_handle);
-
-	Maat_set_feather_opt(feather, MAAT_OPT_INSTANCE_NAME, "certstore", strlen("certstore") + 1);
-
-    if (maat_t->maat_json_switch == 1){
-        Maat_set_feather_opt(feather, MAAT_OPT_JSON_FILE_PATH, maat_t->pxy_path, strlen(maat_t->pxy_path)+1);
-    }
-    if (maat_t->maat_json_switch == 0){
-        Maat_set_feather_opt(feather, MAAT_OPT_FULL_CFG_DIR, maat_t->full_cfg_dir, strlen(maat_t->full_cfg_dir)+1);
-        Maat_set_feather_opt(feather, MAAT_OPT_INC_CFG_DIR, maat_t->inc_cfg_dir, strlen(maat_t->inc_cfg_dir)+1);
-    }
-    if (maat_t->maat_json_switch == 2){
-        Maat_set_feather_opt(feather, MAAT_OPT_REDIS_IP, rte->addr_t.maat_ip, strlen(rte->addr_t.maat_ip)+1);
-        Maat_set_feather_opt(feather, MAAT_OPT_REDIS_PORT, &rte->addr_t.maat_port, sizeof(rte->addr_t.maat_port));
-        Maat_set_feather_opt(feather, MAAT_OPT_REDIS_INDEX, &rte->addr_t.dbindex, sizeof(rte->addr_t.dbindex));
-    }
-
-    Maat_set_feather_opt(feather, MAAT_OPT_SCANDIR_INTERVAL_MS,&scan_interval_ms, sizeof(scan_interval_ms));
-	Maat_set_feather_opt(feather, MAAT_OPT_EFFECT_INVERVAL_MS,&effective_interval_ms, sizeof(effective_interval_ms));
-    /***/
-    const char* foregin_dir="./foreign_files/";
-    Maat_set_feather_opt(feather, MAAT_OPT_FOREIGN_CONT_DIR,foregin_dir, strlen(foregin_dir)+1);
-	ret = Maat_initiate_feather(feather);
-	if (ret < 0)
-	{
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "%s MAAT init failed.", __FUNCTION__);
-	}
-    rte->feather = feather;
-
-    int table_id = maat_table_ex_init("PXY_PROFILE_KEYRING",
-                                      keyring_table_new_cb,
-        					          keyring_table_free_cb,
-        					          keyring_table_dup_cb);
-    if(table_id<0)
-    {
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore register table PXY_PROFILE_KEYRING failed");
-    }
-
-    return 0;
+	mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore register table PXY_PROFILE_KEYRING failed");
+	exit(1);
+	return -1;
 }
 
 int cert_store_session_init(const char *main_profile)
 {
-    mesa_fiel_stat_init(main_profile);
+    kerying_fs_stat_init(main_profile);
 
-    maat_feather_init();
+    kerying_profile_init(main_profile);
 
-    keyring_server_init();
+    keyring_server_init(main_profile);
 
     return 0;
 }
