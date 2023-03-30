@@ -2176,7 +2176,7 @@ static int kerying_fs_stat_init(const char *main_profile)
     return 0;
 }
 
-void keyring_table_new_cb(int table_id, const char *key, const char* table_line, void **ad, long argl, void * argp)
+void keyring_table_new_cb(const char *table_name, int table_id, const char *key, const char* table_line, void **ad, long argl, void * argp)
 {
     char profile_name[CT_ARRARY_LEN]={0};
     char private_file[CT_STRING_MAX] = {0}, public_file[CT_STRING_MAX]={0};
@@ -2249,7 +2249,7 @@ void keyring_table_dup_cb(int table_id,	void **to, void **from, long argl, void 
 struct maat *create_maat_feather(const char * main_profile)
 {
 	struct maat *target=NULL;
-	int input_mode = 0;
+	int input_mode = 0,log_level=0;
 	int ret = 0, effect_interval = 60;
 	int redis_db_idx = 0, deferred_load_on = 0;
 	char table_info[128]={0}, inc_cfg_dir[128]={0}, ful_cfg_dir[128]={0};
@@ -2265,6 +2265,7 @@ struct maat *create_maat_feather(const char * main_profile)
 	MESA_load_profile_string_def(main_profile, "MAAT", "inc_cfg_dir", inc_cfg_dir, sizeof(inc_cfg_dir), "");
 	MESA_load_profile_string_def(main_profile, "MAAT", "full_cfg_dir", ful_cfg_dir, sizeof(ful_cfg_dir), "");
     MESA_load_profile_int_def(main_profile,    "MAAT", "deferred_load_on", &(deferred_load_on), 0);
+	MESA_load_profile_int_def(main_profile,    "MAAT", "log_level", &(log_level), LOG_LEVEL_FATAL);
 
 	MESA_load_profile_string_def(main_profile, "MAAT_REDIS", "ip", redis_server, sizeof(redis_server), "");
     MESA_load_profile_string_def(main_profile, "MAAT_REDIS", "port", redis_port_range, sizeof(redis_server), "6379");
@@ -2291,7 +2292,7 @@ struct maat *create_maat_feather(const char * main_profile)
     struct maat_options *opts = maat_options_new();
 	maat_options_set_instance_name(opts, "certstore");
 	maat_options_set_caller_thread_number(opts, g_cert_store->thread_nu);
-	maat_options_set_logger(opts, "logs/maat.log", LOG_LEVEL_TRACE);
+	maat_options_set_logger(opts, "logs/maat.log", (enum log_level)log_level);
 	switch (input_mode)
 	{
 		case MAAT_INPUT_FILE:
@@ -2343,7 +2344,7 @@ int kerying_profile_init(const char * main_profile)
 	{
 		goto finish;
 	}
-	table_id=maat_plugin_table_ex_schema_register(g_cert_store->instance, g_cert_store->table_id, keyring_table_new_cb,keyring_table_free_cb,
+	table_id=maat_plugin_table_ex_schema_register(g_cert_store->instance, "PXY_PROFILE_KEYRING", keyring_table_new_cb,keyring_table_free_cb,
  						             			  keyring_table_dup_cb, 0, NULL);
 	if(table_id<0)
 	{
