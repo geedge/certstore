@@ -14,7 +14,6 @@ target_link_libraries(certstore dl common
 		pthread
 		uuid
 		libevent-static
-		MESA_htable
 		MESA_prof_load
 		MESA_handle_logger
 		hiredis-static
