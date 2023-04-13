@@ -1587,11 +1587,6 @@ x509_get_rkey(X509 *origin, int keyring_id, char *rkey, int is_valid)
     for (i = 0; i < len ; ++i){
         sprintf(hex + i * sizeof(unsigned char) * 2, "%02x", fdig[i]);
     }
-    /** keyrind_id is 0, sign x509 by default */
-    /** 0 uninsec, 1 insec*/
-    if (is_valid == 1 && keyring_id == 0) keyring_id = 1;
-	if (is_valid == 0 && keyring_id != 0) keyring_id = 0;
-
     struct pxy_obj_keyring *pxy_obj = get_obj_for_id(keyring_id);
     if (pxy_obj != NULL)
     {
