@@ -1101,9 +1101,7 @@ finish:
 static struct pxy_obj_keyring* get_obj_for_id(int keyring_id)
 {
 	struct pxy_obj_keyring *pxy_obj=NULL;
-	char cfg_id_str[16] = {0};
-	snprintf(cfg_id_str, sizeof(cfg_id_str), "%d", keyring_id);
-	pxy_obj = (struct pxy_obj_keyring*)maat_plugin_table_get_ex_data(g_cert_store->instance, g_cert_store->table_id, cfg_id_str);
+	pxy_obj = (struct pxy_obj_keyring*)maat_plugin_table_get_ex_data(g_cert_store->instance, g_cert_store->table_id, (const char *)&keyring_id, sizeof(int));
 	return pxy_obj;
 }
 
