@@ -55,9 +55,4 @@ fi
 if [ -n "${UPLOAD}" ]; then	
 	cp ~/rpm_upload_tools.py ./
 	python3 rpm_upload_tools.py ${PULP3_REPO_NAME} ${PULP3_DIST_NAME} *.rpm
-	
-	rpm -i $SYMBOL_TARGET*debuginfo*.rpm
-	_symbol_file=`find /usr/lib/debug/ -name "$SYMBOL_TARGET*.debug"`
-	cp $_symbol_file ${_symbol_file}info.${CI_COMMIT_SHORT_SHA}
-	sentry-cli upload-dif -t elf ${_symbol_file}info.${CI_COMMIT_SHORT_SHA}
 fi
