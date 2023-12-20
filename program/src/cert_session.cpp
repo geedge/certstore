@@ -954,8 +954,7 @@ static int redis_async_connect(struct event_base *base, struct redisAsyncContext
 	return 0;
 }
 
-static int
-evhttp_socket_send_error(struct evhttp_request *req, int error)
+static int evhttp_socket_send_error(struct evhttp_request *req, int error)
 {
 	FS_operate(g_FP_instance.handle, g_FP_instance.line_ids[KEYPAIR_ACTION_ERR], 0, FS_OP_ADD, 1);
 	evhttp_send_error(req, error, 0);
@@ -964,8 +963,7 @@ evhttp_socket_send_error(struct evhttp_request *req, int error)
 
 /* Callback used for the /dump URI, and for every non-GET request:
  * dumps all information to stdout and gives back a trivial 200 ok */
-static int
-evhttp_socket_send(struct evhttp_request *req, char *sendbuf)
+static int evhttp_socket_send(struct evhttp_request *req, char *sendbuf)
 {
     struct evbuffer *evb = NULL;
 
@@ -989,8 +987,7 @@ done:
     return 0;
 }
 
-static void
-redis_reget_callback(redisAsyncContext __attribute__((__unused__))*cl_ctx,
+static void redis_reget_callback(redisAsyncContext __attribute__((__unused__))*cl_ctx,
                      void *r, void *privdata)
 {
     redisReply *reply              = (redisReply*)r;
@@ -1522,51 +1519,67 @@ void _urldecode(char url[])
     free(res);
 }
 
-static int http_decode_uri(struct evhttp_request *evh_req, struct http_request *request)
+int http_get_headers(struct evhttp_request *evh_req, struct evkeyvalq *headers)
 {
-	int rv = 0;
-    struct evkeyvalq params;
+	int xret = -1;
 
 	const char *uri = evhttp_request_get_uri(evh_req);
-    rv = evhttp_parse_query(uri, &params);
-	if (rv != 0)
+	if(!uri)
 	{
-		return -1;
+		return xret;
 	}
-	const char *health_check = evhttp_find_header(&params, "health_check");
-	if (health_check)
+	return evhttp_parse_query(uri, headers);
+}
+
+int http_get_heal_check(struct evhttp_request *evh_req)
+{
+	int xret = -1;
+	struct evkeyvalq headers;
+	xret = http_get_headers(evh_req, &headers);
+	if(xret != 0)
 	{
-		evhttp_clear_headers(&params);
-		return -2;
+		return xret;
 	}
-	const char *keyring_id = evhttp_find_header(&params, "keyring_id");
+
+	xret = (evhttp_find_header(&headers, "health_check") != NULL) ? 1 : 0;
+	evhttp_clear_headers(&headers);
+	return  xret;
+}
+
+int http_get_request_uri(struct evhttp_request *evh_req, struct http_request *request)
+{
+	int xret=-1;
+	struct evkeyvalq headers;
+
+	xret = http_get_headers(evh_req, &headers);
+	if(xret != 0)
+	{
+		return xret;
+	}
+	const char *keyring_id = evhttp_find_header(&headers, "keyring_id");
     if (keyring_id)
     {
         request->keyring_id = atoi(keyring_id);
     }
-    const char *is_valid = evhttp_find_header(&params, "is_valid");
+    const char *is_valid = evhttp_find_header(&headers, "is_valid");
     if (is_valid)
     {
         request->is_valid = atoi(is_valid);
     }
-    const char *sni = evhttp_find_header(&params, "sni");
+    const char *sni = evhttp_find_header(&headers, "sni");
     if (sni)
     {
 		request->sni = strdup(sni);
 	}
-	evhttp_clear_headers(&params);
-
-	mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "[Thread %d]Received request for uri, kering_id:%d, sni:%s, valid:%d",
-                     request->thread_id, request->keyring_id, request->sni, request->is_valid);
-
+	evhttp_clear_headers(&headers);
+	mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "[Thread %d]Received request for uri, kering_id:%d, sni:%s, valid:%d", request->thread_id, request->keyring_id, request->sni, request->is_valid);
 	return 0;
 }
 
-static void
-evhttp_socket_close_cb(struct evhttp_connection *evcon,
-                       void __attribute__((__unused__))*arg)
+static void evhttp_socket_close_cb(struct evhttp_connection *evcon, void __attribute__((__unused__))*arg)
 {
-    if (NULL == evcon){
+    if (NULL == evcon)
+	{
         goto finish;
     }
 
@@ -1574,8 +1587,7 @@ finish:
     return;
 }
 
-static int
-x509_get_rkey(X509 *origin, int keyring_id, char *rkey, int is_valid)
+static int x509_get_rkey(X509 *origin, int keyring_id, char *rkey, int is_valid)
 {
     unsigned int len = 0, i = 0;
     char hex[EVP_MAX_MD_SIZE] = {0};
@@ -1598,8 +1610,7 @@ finish:
     return 0;
 }
 
-static int
-redis_sync_command(struct http_request *request,  struct redisContext __attribute__((__unused__))*c)
+static int redis_sync_command(struct http_request *request,  struct redisContext __attribute__((__unused__))*c)
 {
 	int xret = -1;
 	redisReply *reply;
@@ -1651,36 +1662,46 @@ static int get_x509_msg(struct http_request *request, char *input, ssize_t input
 	return 0;
 }
 
+int get_keyring_from_local( struct http_request *request)
+{
+	int ret =0;
+	ret = redis_clnt_pdu_send(request);
+	if (ret < 0)
+	{
+		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Local sign certificate failed");
+	}
+	return ret;
+}
+
+int get_keyring_form_redis(x509_forge_thread *info, struct http_request *request, int mode)
+{
+	int ret=0;
+
+	switch (mode)
+	{
+		case 0:
+			ret = redis_sync_command(request, info->sync);
+			if (ret < 0)
+			{
+				mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get information from redis server");
+			}
+			break;
+		case 1:
+			ret = redisAsyncCommand(info->cl_ctx, redis_get_callback, request, "GET %s", request->rkey);
+			if (ret < 0)
+			{
+				mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get information from redis server");
+			}
+			break;
+		default:
+			break;
+	}
+	return ret;
+}
+
 static int get_keypair_cache(x509_forge_thread *info, struct http_request *request, int mode)
 {
-	int xret = 0;
-
-	if (info->sync == NULL)
-	{
-        xret = redis_clnt_pdu_send(request);
-        if (xret < 0)
-        {
-            mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Local sign certificate failed");
-        }
-    }else{
-		if(mode)
-		{
-			xret = redisAsyncCommand(info->cl_ctx, redis_get_callback, request, "GET %s", request->rkey);
-			if (xret < 0)
-			{
-				mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get information from redis server");
-			}
-		}
-		else
-		{
-			xret = redis_sync_command(request, info->sync);
-			if (xret < 0)
-			{
-				mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get information from redis server");
-			}
-		}
-    }
-	return xret;
+	return info->sync == NULL ? get_keyring_from_local(request) : get_keyring_form_redis(info, request, mode);
 }
 
 void http_get_cb(struct evhttp_request *evh_req, void *arg)
@@ -1689,41 +1710,39 @@ void http_get_cb(struct evhttp_request *evh_req, void *arg)
 	struct http_request *request = NULL;
 	struct evbuffer * evbuf_body = NULL;
 	char *input = NULL; ssize_t inputlen=0;
-    x509_forge_thread *info = (x509_forge_thread *)arg;
+	x509_forge_thread *info = (x509_forge_thread *)arg;
 
-	if (evhttp_request_get_command(evh_req) != EVHTTP_REQ_POST) {
+	if (evhttp_request_get_command(evh_req) != EVHTTP_REQ_POST)
+	{
 		mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "FAILED (post type)");
 		goto error;
 	}
+	evhttp_connection_set_closecb(evhttp_request_get_connection(evh_req), evhttp_socket_close_cb, NULL);
+
+	xret = http_get_heal_check(evh_req);
+	if(xret != 0)
+	{
+		evhttp_send_reply(evh_req, 200, "OK", NULL);
+		return;
+	}
+
 	request = (struct http_request *) kmalloc (sizeof(struct http_request), MPF_CLR, -1);
 	request->keyring_id = 0;
 	request->thread_id  = info->id;
 	request->evh_req    = evh_req;
 	clock_gettime(CLOCK_MONOTONIC,&request->create_time);
 
-	xret = http_decode_uri(evh_req, request);
-	if (xret != 0)
+	xret = http_get_request_uri(evh_req, request);
+	if(xret != 0)
 	{
-		if (xret == -2)
-		{
-			request_destroy(request);
-			evhttp_send_reply(evh_req, 200, "OK", NULL);
-			goto finish;
-		}
-		else
-		{
-			goto error;
-		}
+		goto error;
 	}
-	evhttp_connection_set_closecb(evhttp_request_get_connection(evh_req), evhttp_socket_close_cb, NULL);
 	evbuf_body = evhttp_request_get_input_buffer(evh_req);
-	if (!evbuf_body || 0==(inputlen = evbuffer_get_length(evbuf_body))
-		||!(input = (char *)evbuffer_pullup(evbuf_body,inputlen)))
+	if (!evbuf_body || 0==(inputlen = evbuffer_get_length(evbuf_body)) || !(input = (char *)evbuffer_pullup(evbuf_body,inputlen)))
 	{
 		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get certificate information.");
 		goto error;
 	}
-
 	xret = get_x509_msg(request, input, inputlen);
 	if (xret != 0)
 	{
@@ -1737,6 +1756,7 @@ void http_get_cb(struct evhttp_request *evh_req, void *arg)
 		goto finish;
 	}
 error:
+	request_destroy(request);
 	evhttp_socket_send_error(evh_req, HTTP_BADREQUEST);
 finish:
     return;
