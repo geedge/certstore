@@ -2326,7 +2326,6 @@ struct maat *create_maat_feather(const char * main_profile)
 	{
 		maat_options_set_deferred_load_on(opts);
 	}
-	maat_options_set_rule_effect_interval_ms(opts, effect_interval);
 	maat_options_set_foreign_cont_dir(opts, "./foreign_files/");
 
 	target = maat_new(opts, table_info);
