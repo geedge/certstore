@@ -63,22 +63,6 @@ add_dependencies(hiredis-static hiredis)
 set_property(TARGET hiredis-static PROPERTY IMPORTED_LOCATION ${INSTALL_DIR}/lib/libhiredis.a)
 set_property(TARGET hiredis-static PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${INSTALL_DIR}/include)
 
-### libUUID 注意: --enable-shared --with-pic
-ExternalProject_Add(libUUID PREFIX libUUID
-        URL ${CMAKE_CURRENT_SOURCE_DIR}/libuuid-1.0.3.tar.gz
-        URL_MD5 d44d866d06286c08ba0846aba1086d68
-        CONFIGURE_COMMAND cd ../libUUID && ./configure --prefix=<INSTALL_DIR> --enable-shared --with-pic
-        BUILD_COMMAND cd ../libUUID && make
-        INSTALL_COMMAND cd ../libUUID && make install)
-
-ExternalProject_Get_Property(libUUID INSTALL_DIR)
-file(MAKE_DIRECTORY ${INSTALL_DIR}/include)
-
-add_library(uuid SHARED IMPORTED GLOBAL)
-add_dependencies(uuid libUUID)
-set_property(TARGET uuid PROPERTY IMPORTED_LOCATION ${INSTALL_DIR}/lib/libuuid.a)
-set_property(TARGET uuid PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${INSTALL_DIR}/include)
-
 #### GoogleTest
 ExternalProject_Add(googletest PREFIX googletest
         URL ${CMAKE_CURRENT_SOURCE_DIR}/googletest-release-1.8.0.tar.gz

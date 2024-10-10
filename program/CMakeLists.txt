@@ -12,6 +12,7 @@ target_link_libraries(certstore dl common
 		openssl-ssl-static
 		openssl-crypto-static
 		pthread
+		cjson
 		uuid
 		libevent-static
 		MESA_prof_load

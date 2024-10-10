@@ -26,7 +26,7 @@ struct http_request
     int is_valid;
     char *odata;
     X509 *origin;
-    int keyring_id;
+    char *keyring_uuid_str;
     char *sni;
     char rkey[DATALEN];
     struct timespec create_time;
@@ -35,7 +35,7 @@ struct http_request
 
 struct pxy_obj_keyring
 {
-	int keyring_id;
+    char keyring_uuid[64];
     int use_hsm;
     int slot_id;
 	uint64_t expire_time;
@@ -54,7 +54,6 @@ struct pxy_obj_keyring
 struct cert_store_rt
 {
     struct maat *instance;
-    int table_id;
 	int mode;
     int local_debug;
     int thread_nu;

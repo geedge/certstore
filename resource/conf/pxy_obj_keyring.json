@@ -1,22 +1,13 @@
 {
-	"compile_table": "PXY_CTRL_COMPILE",
-    "group2compile_table": "GROUP_COMPILE_RELATION",
-    "group2group_table": "GROUP_GROUP_RELATION",
+	"rule_table": "PXY_CTRL_RULE",
+    "object2object_table": "OBJECT_GROUP",
     "plugin_table": [
         {
             "table_name": "PXY_PROFILE_KEYRING",
 			  "table_content": [
-                "0\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-v3-untrust-ca.pem\t/home/fengweihao/tool/test_cert/root/tango-ca-v3-untrust-ca.pem\t0\trsa1024\tNULL\t1\t1\t2019112101\t",
-				"11\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem\t//home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem\t0\trsa1024\tNULL\t0\t1\t2019112102\t",
-				"1\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-key.pem\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-cer.pem\t24\trsa2048\tNULL\t0\t1\t20191121990\t",
-				"3\tname_01\troot\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-key.pem\t/home/fengweihao/tool/test_cert/root/tango-ca-trust-ca-cer.pem\t30\trsa4096\tNULL\t1\t1\t2019112102\t",
-				"9\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-key.pem\t/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-cer.pem\t30\trsa1024\tNULL\t1\t1\t2019112104\t",
-				"8\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-key.pem\t/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-ca-l1-cert.pem\t30\trsa1024\tNULL\t1\t1\t2019112105\t",
-				"12\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/Tang-Ca-IIS-v2.key\t/home/fengweihao/tool/test_cert/Intermediate/Tang-Ca-IIS-v2-v2-v1-ca.cer\t30\trsa1024\tNULL\t0\t1\t20191106\t",
-				"13\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/Tang-Ca-IIS-v2.key\t/home/fengweihao/tool/test_cert/Intermediate/Tang-Ca-IIS-v2-ca-v1-v2.cer\t30\trsa1024\tNULL\t0\t1\t20191107\t",
-				"4\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/Tang-Ca-IIS-v2.key\t/home/fengweihao/tool/test_cert/Intermediate/Tang-Ca-IIS-v2-v1-ca-v2.cer\t30\trsa1024\tNULL\t0\t1\t20191108\t",
-				"5\tname_01\tintermediate\t/home/fengweihao/tool/test_cert/Intermediate/ca01-mle-key.pem\t/home/fengweihao/tool/test_cert/Intermediate/ca01-mle.pem\t30\trsa4096\tNULL\t1\t1\t20191108\t",
-				"10\tname_01\tend-entity\t/home/fengweihao/tool/test_cert/end-entity/tang-ca-v3-www.bing.com-key.pem\t/home/fengweihao/tool/test_cert/end-entity/tang-ca-v3-www.bing.com-cer.pem\t30\trsa4096\tNULL\t0\t1\t20191107\t"
+				 {"uuid":"fbc46c83-426e-4998-b712-362351896d08","name":"root","keyring_type":"root","private_key_path":"/home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem","public_key_path":"/home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem","reissue_expiry_hour":24,"include_root":0,"public_key_algo":"rsa2048","crl":"null","use_hsm":0,"slot_id":0,"vsys":"1","is_valid":1,"modified_time":"1716531859000000"},
+				 {"uuid":"9aacf38b-11e9-4859-a754-d66fae988801","name":"intermediate","keyring_type":"intermediate","private_key_path":"/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-key.pem","public_key_path":"/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-cer.pem","reissue_expiry_hour":24,"include_root":1,"public_key_algo":"rsa2048","crl":"null","use_hsm":0,"slot_id":0,"vsys":"1","is_valid":1,"modified_time":"1716531859000000"},
+				 {"uuid":"21d04c59-35c3-4b36-b05c-c373f6fe7ab3","name":"end-entity","keyring_type":"end-entity","private_key_path":"/home/fengweihao/tool/test_cert/end-entity/tang-ca-v3-www.bing.com-key.pem","public_key_path":"/home/fengweihao/tool/test_cert/end-entity/tang-ca-v3-www.bing.com-cer.pem","reissue_expiry_hour":24,"include_root":1,"public_key_algo":"rsa2048","crl":"null","use_hsm":0,"slot_id":0,"vsys":"1","is_valid":1,"modified_time":"1716531859000000"}
             ]
         }
     ]

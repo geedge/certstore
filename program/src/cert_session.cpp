@@ -40,6 +40,7 @@
 #include <MESA/maat.h>
 #include <MESA/field_stat2.h>
 #include <MESA/MESA_prof_load.h>
+#include <MESA/cJSON.h>
 
 #include "cert_store.h"
 #include "libevent.h"
@@ -936,6 +937,12 @@ void request_destroy(struct http_request *request)
 		free(request->sni);
 		request->sni=NULL;
 	}
+	if (request->keyring_uuid_str)
+	{
+		free(request->keyring_uuid_str);
+		request->keyring_uuid_str=NULL;
+	}
+
 	free(request);
 	request = NULL;
 }
@@ -1000,7 +1007,7 @@ static void redis_reget_callback(redisAsyncContext __attribute__((__unused__))*c
     return;
 }
 
-void keyring_table_free_cb(int table_id, void **ad, long argl, void *argp)
+void keyring_table_free_cb(const char *table_name, void **ad, long argl, void *argp)
 {
     if (*ad == NULL)
    	{
@@ -1095,10 +1102,10 @@ finish:
 	return serial;
 }
 
-static struct pxy_obj_keyring* get_obj_for_id(int keyring_id)
+static struct pxy_obj_keyring* get_obj_for_id(char *keyring_uuid_str)
 {
 	struct pxy_obj_keyring *pxy_obj=NULL;
-	pxy_obj = (struct pxy_obj_keyring*)maat_plugin_table_get_ex_data(g_cert_store->instance, g_cert_store->table_id, (const char *)&keyring_id, sizeof(int));
+	pxy_obj = (struct pxy_obj_keyring*)maat_plugin_table_get_ex_data(g_cert_store->instance, "PXY_PROFILE_KEYRING", keyring_uuid_str, strlen(keyring_uuid_str));
 	return pxy_obj;
 }
 
@@ -1106,17 +1113,17 @@ static int x509_online_append(struct x509_object_ctx *def, struct http_request *
                               STACK_OF(X509) **stack_ca)
 {
     X509* x509 = NULL;
-    int is_valid = 1; int keyring_id = request->keyring_id;
+    int is_valid = 1; char* keyring_uuid_str = request->keyring_uuid_str;
     int expire_time = 0; char *serial = NULL;
     X509 *cacrt = NULL; EVP_PKEY *cakey = NULL;
 	char *v3_ctl=NULL, *public_algo=NULL;
 
-    struct pxy_obj_keyring *pxy_obj = get_obj_for_id(keyring_id);
+    struct pxy_obj_keyring *pxy_obj = get_obj_for_id(keyring_uuid_str);
     if (NULL == pxy_obj)
     {
         if (!g_cert_store->local_debug)
         {
-            pxy_obj = get_obj_for_id(keyring_id);
+            pxy_obj = get_obj_for_id(keyring_uuid_str);
 			if (pxy_obj == NULL)
 			{
 				mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Get the default keypair failed, EXIT!!!");
@@ -1124,7 +1131,7 @@ static int x509_online_append(struct x509_object_ctx *def, struct http_request *
 			}
 			else
 			{
-				mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Get the keypar %d, sign cert", keyring_id);
+				mesa_runtime_log(RLOG_LV_DEBUG, MODULE_NAME, "Get the keypar %s, sign cert", keyring_uuid_str);
 			}
         }
         else
@@ -1147,7 +1154,7 @@ static int x509_online_append(struct x509_object_ctx *def, struct http_request *
 	}
     if (!STRCMP(pxy_obj->keyring_type, "end-entity"))
     {
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate(%d) type is an entity",keyring_id);
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate(%s) type is an entity",keyring_uuid_str);
 		*stack_ca = pxy_obj->stack_ca;
         x509_get_msg_from_ca(pxy_obj->issuer, sign);
         x509_get_private_key(pxy_obj->key, pkey);
@@ -1155,7 +1162,7 @@ static int x509_online_append(struct x509_object_ctx *def, struct http_request *
     }
     if (!STRCMP(pxy_obj->keyring_type, "intermediate"))
     {
-        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate(%d) type is intermediate", keyring_id);
+        mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "The certificate(%s) type is intermediate", keyring_uuid_str);
 
     }
     cacrt = pxy_obj->issuer;
@@ -1556,24 +1563,37 @@ int http_get_request_uri(struct evhttp_request *evh_req, struct http_request *re
 	{
 		return xret;
 	}
-	const char *keyring_id = evhttp_find_header(&headers, "keyring_id");
-    if (keyring_id)
-    {
-        request->keyring_id = atoi(keyring_id);
-    }
-    const char *is_valid = evhttp_find_header(&headers, "is_valid");
-    if (is_valid)
-    {
-        request->is_valid = atoi(is_valid);
-    }
-    const char *sni = evhttp_find_header(&headers, "sni");
-    if (sni)
-    {
-		request->sni = strdup(sni);
+
+	const char *keyring_uuid_str=NULL, *is_valid=NULL, *sni=NULL;
+
+	keyring_uuid_str = evhttp_find_header(&headers, "keyring_uuid_str");
+	if(keyring_uuid_str == NULL)
+	{
+		xret =-1;
+		goto finish;
 	}
+    request->keyring_uuid_str = strdup(keyring_uuid_str);
+
+    is_valid = evhttp_find_header(&headers, "is_valid");
+	if(is_valid == NULL)
+	{
+		xret =-1;
+		goto finish;
+	}
+    request->is_valid = atoi(is_valid);
+
+    sni = evhttp_find_header(&headers, "sni");
+    if (sni == NULL)
+    {
+		xret =-1;
+		goto finish;
+	}
+	request->sni = strdup(sni);
+	xret=0;
+finish:
 	evhttp_clear_headers(&headers);
-	mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "[Thread %d]Received request for uri, kering_id:%d, sni:%s, valid:%d", request->thread_id, request->keyring_id, request->sni, request->is_valid);
-	return 0;
+	mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "[Thread %d]Received request for uri, kering_id:%s, sni:%s, valid:%d", request->thread_id, request->keyring_uuid_str, request->sni, request->is_valid);
+	return xret;
 }
 
 static void evhttp_socket_close_cb(struct evhttp_connection *evcon, void __attribute__((__unused__))*arg)
@@ -1587,7 +1607,7 @@ finish:
     return;
 }
 
-static int x509_get_rkey(X509 *origin, int keyring_id, char *rkey, int is_valid)
+static int x509_get_rkey(X509 *origin, char *keyring_uuid_str, char *rkey, int is_valid)
 {
     unsigned int len = 0, i = 0;
     char hex[EVP_MAX_MD_SIZE] = {0};
@@ -1597,13 +1617,13 @@ static int x509_get_rkey(X509 *origin, int keyring_id, char *rkey, int is_valid)
     for (i = 0; i < len ; ++i){
         sprintf(hex + i * sizeof(unsigned char) * 2, "%02x", fdig[i]);
     }
-    struct pxy_obj_keyring *pxy_obj = get_obj_for_id(keyring_id);
+    struct pxy_obj_keyring *pxy_obj = get_obj_for_id(keyring_uuid_str);
     if (pxy_obj != NULL)
     {
-        snprintf(rkey, DATALEN, "%d:%lu:%s:%d", keyring_id, pxy_obj->op_time, hex, is_valid);
+        snprintf(rkey, DATALEN, "%s:%lu:%s:%d", keyring_uuid_str, pxy_obj->op_time, hex, is_valid);
         goto finish;
     }
-    snprintf(rkey, DATALEN, "%d:%s:%d", keyring_id, hex, is_valid);
+    snprintf(rkey, DATALEN, "%s:%s:%d", keyring_uuid_str, hex, is_valid);
 finish:
 	if (pxy_obj)
         keyring_table_free(pxy_obj);
@@ -1652,7 +1672,7 @@ static int get_x509_msg(struct http_request *request, char *input, ssize_t input
 		request_destroy(request);
         return -1;
     }
-    x509_get_rkey(request->origin, request->keyring_id, request->rkey, request->is_valid);
+    x509_get_rkey(request->origin, request->keyring_uuid_str, request->rkey, request->is_valid);
     if (request->rkey[0] == '\0'){
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Get the redis key from the certificate failed");
         return -1;
@@ -1727,7 +1747,6 @@ void http_get_cb(struct evhttp_request *evh_req, void *arg)
 	}
 
 	request = (struct http_request *) kmalloc (sizeof(struct http_request), MPF_CLR, -1);
-	request->keyring_id = 0;
 	request->thread_id  = info->id;
 	request->evh_req    = evh_req;
 	clock_gettime(CLOCK_MONOTONIC,&request->create_time);
@@ -1743,6 +1762,7 @@ void http_get_cb(struct evhttp_request *evh_req, void *arg)
 		mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to get certificate information.");
 		goto error;
 	}
+
 	xret = get_x509_msg(request, input, inputlen);
 	if (xret != 0)
 	{
@@ -2189,40 +2209,115 @@ static int kerying_fs_stat_init(const char *main_profile)
     return 0;
 }
 
-void keyring_table_new_cb(const char *table_name, int table_id, const char *key, const char* table_line, void **ad, long argl, void * argp)
+char *keyring_get_value_string(cJSON *pxy_profile_keyring, const char *keyword)
 {
-    char profile_name[CT_ARRARY_LEN]={0};
-    char private_file[CT_STRING_MAX] = {0}, public_file[CT_STRING_MAX]={0};
-    char __attribute__((__unused__))_priv_file[CT_PATH_MAX] = {0};
-    char __attribute__((__unused__))_publi_file[CT_PATH_MAX] = {0};
-    int ret=0;
+	cJSON *item = cJSON_GetObjectItem(pxy_profile_keyring, keyword);
+	if(item==NULL || item->type!=cJSON_String)
+	{
+		return NULL;
+	}
 
-	struct pxy_obj_keyring *pxy_obj = NULL;
+	return item->valuestring;
+}
 
-    pxy_obj = (struct pxy_obj_keyring *)malloc(sizeof(struct pxy_obj_keyring));
+int keyring_get_value_number(cJSON *pxy_profile_keyring, const char *keyword)
+{
+	cJSON *item = cJSON_GetObjectItem(pxy_profile_keyring, keyword);
+	if(item==NULL && item->type!=cJSON_Number)
+	{
+		return -1;
+	}
+
+	return item->valueint;
+}
+
+void keyring_table_new_cb(const char *table_name, const char *key, const char* table_line, void **ad, long argl, void * argp)
+{
+    char *private_file=NULL, *public_file=NULL;
+
+	cJSON* pxy_profile_keyring = cJSON_Parse(table_line);
+	if(pxy_profile_keyring == NULL)
+	{
+		mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "PXY_PROFILE_KEYRING parse table_line failed %s", table_line);
+		return;
+	}
+
+	struct pxy_obj_keyring *pxy_obj = (struct pxy_obj_keyring *)malloc(sizeof(struct pxy_obj_keyring));
     if (!pxy_obj)
     {
+    	cJSON_Delete(pxy_profile_keyring);
         mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Can not alloc, %s", strerror(errno));
-        goto finish;
+        return;
     }
     memset(pxy_obj, 0, sizeof(struct pxy_obj_keyring));
 	atomic64_set(&pxy_obj->ref_cnt, 1);
 
-	ret=sscanf(table_line, "%d\t%s\t%s\t%s\t%s\t%lu\t%s\t%s\t%d\t%d\t%d\t%d", &pxy_obj->keyring_id, profile_name,
-		       pxy_obj->keyring_type, private_file, public_file, &pxy_obj->expire_time, pxy_obj->public_algo,
-		       pxy_obj->v3_ctl, &pxy_obj->is_send, &pxy_obj->use_hsm, &pxy_obj->slot_id, &pxy_obj->is_valid);
-	if(ret!=12)
+	char *value_string = keyring_get_value_string(pxy_profile_keyring, "uuid");
+	if(value_string != NULL)
 	{
-        kfree(pxy_obj);
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore parse config failed: %s", table_line);
-        goto finish;
+		memcpy(pxy_obj->keyring_uuid, value_string, strlen(value_string));
+	}
+	value_string = keyring_get_value_string(pxy_profile_keyring, "keyring_type");
+	if(value_string != NULL)
+	{
+		memcpy(pxy_obj->keyring_type, value_string, strlen(value_string));
+	}
+	value_string = keyring_get_value_string(pxy_profile_keyring, "private_key_path");
+	if(value_string != NULL)
+	{
+		private_file = value_string;
+	}
+	value_string = keyring_get_value_string(pxy_profile_keyring, "public_key_path");
+	if(value_string != NULL)
+	{
+		public_file = value_string;
+	}
+	value_string = keyring_get_value_string(pxy_profile_keyring, "public_key_algo");
+	if(value_string != NULL)
+	{
+		memcpy(pxy_obj->public_algo, value_string, strlen(value_string));
+	}
+	value_string = keyring_get_value_string(pxy_profile_keyring, "crl");
+	if(value_string != NULL)
+	{
+		memcpy(pxy_obj->v3_ctl, value_string, strlen(value_string));
+	}
+
+	int value_int = keyring_get_value_number(pxy_profile_keyring, "reissue_expiry_hour");
+	if(value_int > 0)
+	{
+		pxy_obj->expire_time = value_int;
+	}
+
+	value_int = keyring_get_value_number(pxy_profile_keyring, "include_root");
+	if(value_int > 0)
+	{
+		pxy_obj->is_send = value_int;
+	}
+
+	value_int = keyring_get_value_number(pxy_profile_keyring, "use_hsm");
+	if(value_int > 0)
+	{
+		pxy_obj->use_hsm = value_int;
+	}
+
+	value_int = keyring_get_value_number(pxy_profile_keyring, "is_valid");
+	if(value_int > 0)
+	{
+		pxy_obj->is_valid = value_int;
+	}
+
+	value_int = keyring_get_value_number(pxy_profile_keyring, "slot_id");
+	if(value_int > 0)
+	{
+		pxy_obj->slot_id = value_int;
 	}
 	pxy_obj->op_time = time(NULL);
 
     /*Load PUBLICKEY***/
     if ((pxy_obj->issuer = x509_get_root_ca(public_file, pxy_obj->is_send, pxy_obj->keyring_type, &pxy_obj->stack_ca)) == NULL ){
-        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "initialize the x509 publickey failed, the keyring id is %d",
-                         pxy_obj->keyring_id);
+        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "initialize the x509 publickey failed, the keyring id is %s",
+                         pxy_obj->keyring_uuid);
 		goto finish;
 	}
 
@@ -2230,20 +2325,22 @@ void keyring_table_new_cb(const char *table_name, int table_id, const char *key,
 	{
 		/*Load PRIVATEKEY**/
 	    if ((pxy_obj->key = cert_load_key(private_file)) == NULL){
-	        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "initialize the x509 privatekey failed, the keyring id is %d",
-	                         pxy_obj->keyring_id);
+	        mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "initialize the x509 privatekey failed, the keyring id is %s",
+	                         pxy_obj->keyring_uuid);
 	        goto finish;
 	    }
 	}
 
-    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "initialize the x509 certificate, the keyring id is %d",
-                     pxy_obj->keyring_id);
+    mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "initialize the x509 certificate, the keyring id is %s",
+                     pxy_obj->keyring_uuid);
 	*ad = pxy_obj;
 finish:
+	cJSON_Delete(pxy_profile_keyring);
+	pxy_profile_keyring=NULL;
 	return;
 }
 
-void keyring_table_dup_cb(int table_id,	void **to, void **from, long argl, void *argp)
+void keyring_table_dup_cb(const char *table_name, void **to, void **from, long argl, void *argp)
 {
 	struct pxy_obj_keyring* pxy_obj=(struct pxy_obj_keyring*)(*from);
     if(pxy_obj==NULL)
@@ -2265,8 +2362,7 @@ struct maat *create_maat_feather(const char * main_profile)
 	int input_mode = 0,log_level=0;
 	int ret = 0, effect_interval = 60;
 	int redis_db_idx = 0, deferred_load_on = 0;
-	char table_info[128]={0}, inc_cfg_dir[128]={0}, ful_cfg_dir[128]={0};
-	char json_cfg_file[128] = {0};
+	char table_info[128]={0}, json_cfg_file[128] = {0};
 	char redis_server[128]={0},redis_port_range[128]={0};
 	int redis_port_begin=0, redis_port_end=0;
 	int redis_port_select=0;
@@ -2275,8 +2371,6 @@ struct maat *create_maat_feather(const char * main_profile)
 	MESA_load_profile_string_def(main_profile, "MAAT", "table_info", table_info, sizeof(table_info), "");
     MESA_load_profile_int_def(main_profile,    "MAAT", "effective_interval", &(effect_interval), 60);
 	MESA_load_profile_string_def(main_profile, "MAAT", "pxy_obj_keyring", json_cfg_file, sizeof(json_cfg_file), "");
-	MESA_load_profile_string_def(main_profile, "MAAT", "inc_cfg_dir", inc_cfg_dir, sizeof(inc_cfg_dir), "");
-	MESA_load_profile_string_def(main_profile, "MAAT", "full_cfg_dir", ful_cfg_dir, sizeof(ful_cfg_dir), "");
     MESA_load_profile_int_def(main_profile,    "MAAT", "deferred_load_on", &(deferred_load_on), 0);
 	MESA_load_profile_int_def(main_profile,    "MAAT", "log_level", &(log_level), LOG_LEVEL_FATAL);
 
@@ -2300,7 +2394,7 @@ struct maat *create_maat_feather(const char * main_profile)
 	}
 
 	effect_interval *= 1000;//convert s to ms
-	assert(strlen(inc_cfg_dir) != 0 || strlen(ful_cfg_dir) != 0 || strlen(redis_server)!=0 || strlen(json_cfg_file)!=0);
+	assert(strlen(redis_server)!=0 || strlen(json_cfg_file)!=0);
 
     struct maat_options *opts = maat_options_new();
 	maat_options_set_instance_name(opts, "certstore");
@@ -2308,9 +2402,6 @@ struct maat *create_maat_feather(const char * main_profile)
 	maat_options_set_logger(opts, "logs/maat.log", (enum log_level)log_level);
 	switch (input_mode)
 	{
-		case MAAT_INPUT_FILE:
-			maat_options_set_iris(opts, ful_cfg_dir, inc_cfg_dir);
-			break;
 		case MAAT_INPUT_JSON:
 			maat_options_set_json_file(opts, json_cfg_file);
 			break;
@@ -2344,21 +2435,16 @@ error_out:
 
 int kerying_profile_init(const char * main_profile)
 {
-	int table_id=0;
+	int ret=0;
 
 	g_cert_store->instance = create_maat_feather(main_profile);
 	if(!g_cert_store->instance)
 	{
 		goto finish;
 	}
-	g_cert_store->table_id=maat_get_table_id(g_cert_store->instance, "PXY_PROFILE_KEYRING");
-	if(g_cert_store->table_id<0)
-	{
-		goto finish;
-	}
-	table_id=maat_plugin_table_ex_schema_register(g_cert_store->instance, "PXY_PROFILE_KEYRING", keyring_table_new_cb,keyring_table_free_cb,
+	ret=maat_plugin_table_ex_schema_register(g_cert_store->instance, "PXY_PROFILE_KEYRING", keyring_table_new_cb,keyring_table_free_cb,
  						             			  keyring_table_dup_cb, 0, NULL);
-	if(table_id<0)
+	if(ret<0)
 	{
 		goto finish;
 	}
