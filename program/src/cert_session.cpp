@@ -1105,7 +1105,7 @@ finish:
 static struct pxy_obj_keyring* get_obj_for_id(char *keyring_uuid_str)
 {
 	struct pxy_obj_keyring *pxy_obj=NULL;
-	pxy_obj = (struct pxy_obj_keyring*)maat_plugin_table_get_ex_data(g_cert_store->instance, "PXY_PROFILE_KEYRING", keyring_uuid_str, strlen(keyring_uuid_str));
+	pxy_obj = (struct pxy_obj_keyring*)maat_plugin_table_get_ex_data(g_cert_store->instance, "DECRYPTION_KEYRING", keyring_uuid_str, strlen(keyring_uuid_str));
 	return pxy_obj;
 }
 
@@ -1566,7 +1566,7 @@ int http_get_request_uri(struct evhttp_request *evh_req, struct http_request *re
 
 	const char *keyring_uuid_str=NULL, *is_valid=NULL, *sni=NULL;
 
-	keyring_uuid_str = evhttp_find_header(&headers, "keyring_uuid_str");
+	keyring_uuid_str = evhttp_find_header(&headers, "keyring_id");
 	if(keyring_uuid_str == NULL)
 	{
 		xret =-1;
@@ -2238,7 +2238,7 @@ void keyring_table_new_cb(const char *table_name, const char *key, const char* t
 	cJSON* pxy_profile_keyring = cJSON_Parse(table_line);
 	if(pxy_profile_keyring == NULL)
 	{
-		mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "PXY_PROFILE_KEYRING parse table_line failed %s", table_line);
+		mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "DECRYPTION_KEYRING parse table_line failed %s", table_line);
 		return;
 	}
 
@@ -2262,12 +2262,12 @@ void keyring_table_new_cb(const char *table_name, const char *key, const char* t
 	{
 		memcpy(pxy_obj->keyring_type, value_string, strlen(value_string));
 	}
-	value_string = keyring_get_value_string(pxy_profile_keyring, "private_key_path");
+	value_string = keyring_get_value_string(pxy_profile_keyring, "private_key_file");
 	if(value_string != NULL)
 	{
 		private_file = value_string;
 	}
-	value_string = keyring_get_value_string(pxy_profile_keyring, "public_key_path");
+	value_string = keyring_get_value_string(pxy_profile_keyring, "public_key_file");
 	if(value_string != NULL)
 	{
 		public_file = value_string;
@@ -2283,13 +2283,13 @@ void keyring_table_new_cb(const char *table_name, const char *key, const char* t
 		memcpy(pxy_obj->v3_ctl, value_string, strlen(value_string));
 	}
 
-	int value_int = keyring_get_value_number(pxy_profile_keyring, "reissue_expiry_hour");
+	int value_int = keyring_get_value_number(pxy_profile_keyring, "reissue_expiry_date");
 	if(value_int > 0)
 	{
 		pxy_obj->expire_time = value_int;
 	}
 
-	value_int = keyring_get_value_number(pxy_profile_keyring, "include_root");
+	value_int = keyring_get_value_number(pxy_profile_keyring, "is_send_root_cert");
 	if(value_int > 0)
 	{
 		pxy_obj->is_send = value_int;
@@ -2442,7 +2442,7 @@ int kerying_profile_init(const char * main_profile)
 	{
 		goto finish;
 	}
-	ret=maat_plugin_table_ex_schema_register(g_cert_store->instance, "PXY_PROFILE_KEYRING", keyring_table_new_cb,keyring_table_free_cb,
+	ret=maat_plugin_table_ex_schema_register(g_cert_store->instance, "DECRYPTION_KEYRING", keyring_table_new_cb,keyring_table_free_cb,
  						             			  keyring_table_dup_cb, 0, NULL);
 	if(ret<0)
 	{
@@ -2450,7 +2450,7 @@ int kerying_profile_init(const char * main_profile)
 	}
 	return 0;
 finish:
-	mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore register table PXY_PROFILE_KEYRING failed");
+	mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "certstore register table DECRYPTION_KEYRING failed");
 	exit(1);
 	return -1;
 }

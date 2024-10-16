@@ -3,11 +3,11 @@
     "object2object_table": "OBJECT_GROUP",
     "plugin_table": [
         {
-            "table_name": "PXY_PROFILE_KEYRING",
+            "table_name": "DECRYPTION_KEYRING",
 			  "table_content": [
-				 {"uuid":"fbc46c83-426e-4998-b712-362351896d08","name":"root","keyring_type":"root","private_key_path":"/home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem","public_key_path":"/home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem","reissue_expiry_hour":24,"include_root":0,"public_key_algo":"rsa2048","crl":"null","use_hsm":0,"slot_id":0,"vsys":"1","is_valid":1,"modified_time":"1716531859000000"},
-				 {"uuid":"9aacf38b-11e9-4859-a754-d66fae988801","name":"intermediate","keyring_type":"intermediate","private_key_path":"/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-key.pem","public_key_path":"/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-cer.pem","reissue_expiry_hour":24,"include_root":1,"public_key_algo":"rsa2048","crl":"null","use_hsm":0,"slot_id":0,"vsys":"1","is_valid":1,"modified_time":"1716531859000000"},
-				 {"uuid":"21d04c59-35c3-4b36-b05c-c373f6fe7ab3","name":"end-entity","keyring_type":"end-entity","private_key_path":"/home/fengweihao/tool/test_cert/end-entity/tang-ca-v3-www.bing.com-key.pem","public_key_path":"/home/fengweihao/tool/test_cert/end-entity/tang-ca-v3-www.bing.com-cer.pem","reissue_expiry_hour":24,"include_root":1,"public_key_algo":"rsa2048","crl":"null","use_hsm":0,"slot_id":0,"vsys":"1","is_valid":1,"modified_time":"1716531859000000"}
+				 {"uuid":"fbc46c83-426e-4998-b712-362351896d08","name":"root","keyring_type":"root","private_key_file":"/home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem","public_key_file":"/home/fengweihao/tool/test_cert/root/tango-ca-v3-trust-ca.pem","reissue_expiry_date":24,"is_send_root_cert":0,"public_key_algo":"rsa2048","crl":"null","use_hsm":0,"slot_id":0,"vsys":"1","is_valid":1},
+				 {"uuid":"9aacf38b-11e9-4859-a754-d66fae988801","name":"intermediate","keyring_type":"intermediate","private_key_file":"/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-key.pem","public_key_file":"/home/fengweihao/tool/test_cert/Intermediate/tang-ca-v3-intermediate-01-cer.pem","reissue_expiry_date":24,"is_send_root_cert":1,"public_key_algo":"rsa2048","crl":"null","use_hsm":0,"slot_id":0,"vsys":"1","is_valid":1},
+				 {"uuid":"21d04c59-35c3-4b36-b05c-c373f6fe7ab3","name":"end-entity","keyring_type":"end-entity","private_key_file":"/home/fengweihao/tool/test_cert/end-entity/tang-ca-v3-www.bing.com-key.pem","public_key_file":"/home/fengweihao/tool/test_cert/end-entity/tang-ca-v3-www.bing.com-cer.pem","reissue_expiry_date":24,"is_send_root_cert":1,"public_key_algo":"rsa2048","crl":"null","use_hsm":0,"slot_id":0,"vsys":"1","is_valid":1}
             ]
         }
     ]
