@@ -2301,12 +2301,6 @@ void keyring_table_new_cb(const char *table_name, const char *key, const char* t
 		pxy_obj->use_hsm = value_int;
 	}
 
-	value_int = keyring_get_value_number(pxy_profile_keyring, "is_valid");
-	if(value_int > 0)
-	{
-		pxy_obj->is_valid = value_int;
-	}
-
 	value_int = keyring_get_value_number(pxy_profile_keyring, "slot_id");
 	if(value_int > 0)
 	{
