@@ -1,6 +1,6 @@
 {
 	"rule_table": "PXY_CTRL_RULE",
-    "object2object_table": "OBJECT_GROUP",
+    "object_group_table": "OBJECT_GROUP",
     "plugin_table": [
         {
             "table_name": "DECRYPTION_KEYRING",
