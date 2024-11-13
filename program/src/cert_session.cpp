@@ -38,7 +38,7 @@
 
 #include <async.h>
 #include <MESA/maat.h>
-#include <MESA/field_stat2.h>
+#include <fieldstat/fieldstat_easy.h>
 #include <MESA/MESA_prof_load.h>
 #include <MESA/cJSON.h>
 
@@ -69,22 +69,18 @@ enum keypair_action
 	KEYPAIR_ACTION_MAX
 };
 
-struct fs_stats_t{
-	int field_id[KEYPAIR_ACTION_MAX];
-    int line_ids[KEYPAIR_ACTION_MAX];
-    screen_stat_handle_t handle;
-	char histogram_bins[256];
-	enum field_calc_algo favorite;
+struct fs_stats_t
+{
+	int column_ids[KEYPAIR_ACTION_MAX];
+	int histogram_column_ids[KEYPAIR_ACTION_MAX];
+	struct fieldstat_easy *fieldstat;
 };
 
 static struct fs_stats_t g_FP_instance = {
-	.field_id = {0},
-    .line_ids = {0},
-    .handle = NULL,
-    .histogram_bins = {0},
+	.column_ids = {0},
+    .histogram_column_ids = {0},
+	.fieldstat = NULL,
 };
-
-static const char* FP_HISTOGRAM_BINS="0.50,0.80,0.9,0.95,0.99";
 
 #define sizeof_seconds(x)  (x * 24 * 60 * 60)
 #define half_hours(x)    (x * 1800)
@@ -146,16 +142,16 @@ static x509_algo_name algo_name[] = {
     {"secp384r1",NID_secp384r1}
 };
 
-static void fp_stat_latency(struct timespec create_time, int keys)
+static void fp_stat_latency(struct timespec create_time, int thread_id, int keys)
 {
 	struct timespec end;
 	long long jiffies_ms=0;
 	clock_gettime(CLOCK_MONOTONIC,&end);
 
-	FS_operate(g_FP_instance.handle, g_FP_instance.line_ids[keys], 0,  FS_OP_ADD, 1);
+	fieldstat_easy_counter_incrby(g_FP_instance.fieldstat, thread_id, g_FP_instance.column_ids[keys], NULL, 0, 1);
 	jiffies_ms=(end.tv_sec-create_time.tv_sec)*1000000+(end.tv_nsec-create_time.tv_nsec)/1000;
-	FS_operate(g_FP_instance.handle, g_FP_instance.field_id[keys], 0, FS_OP_SET, jiffies_ms);
-	FS_operate(g_FP_instance.handle, g_FP_instance.field_id[KEYPAIR_ACTION_REQ], 0, FS_OP_SET, jiffies_ms);
+	fieldstat_easy_histogram_record(g_FP_instance.fieldstat, thread_id, g_FP_instance.histogram_column_ids[keys], NULL, 0, jiffies_ms);
+	fieldstat_easy_histogram_record(g_FP_instance.fieldstat, thread_id, g_FP_instance.histogram_column_ids[KEYPAIR_ACTION_REQ], NULL, 0, jiffies_ms);
 
 	return;
 }
@@ -961,9 +957,9 @@ static int redis_async_connect(struct event_base *base, struct redisAsyncContext
 	return 0;
 }
 
-static int evhttp_socket_send_error(struct evhttp_request *req, int error)
+static int evhttp_socket_send_error(struct evhttp_request *req, int thread_id, int error)
 {
-	FS_operate(g_FP_instance.handle, g_FP_instance.line_ids[KEYPAIR_ACTION_ERR], 0, FS_OP_ADD, 1);
+	fieldstat_easy_counter_incrby(g_FP_instance.fieldstat, thread_id, g_FP_instance.column_ids[KEYPAIR_ACTION_ERR], NULL, 0, 1);
 	evhttp_send_error(req, error, 0);
 	return 0;
 }
@@ -1244,12 +1240,12 @@ rediSyncCommand(redisContext *sync, struct http_request *request, char *odata, i
     switch (readBytes(reply->str)) {
         case '+' :
             mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Writing data(%s) to redis successfully", request->rkey);
-			fp_stat_latency(request->create_time, KEYPAIR_ACTION_SIGN);
+			fp_stat_latency(request->create_time, request->thread_id, KEYPAIR_ACTION_SIGN);
             evhttp_socket_send(evh_req, request->odata);
             goto free;
         case '$' :
             mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Writing data(%s) to redis failed", request->rkey);
-			fp_stat_latency(request->create_time, KEYPAIR_ACTION_SQL);
+			fp_stat_latency(request->create_time, request->thread_id, KEYPAIR_ACTION_SQL);
 			if (g_cert_store->mode){
             	redisAsyncCommand(thread->cl_ctx, redis_reget_callback, request, "GET %s", request->rkey);
 			}else{
@@ -1259,7 +1255,7 @@ rediSyncCommand(redisContext *sync, struct http_request *request, char *odata, i
             goto finish;
         default:
             mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "Read redis data(%s) return code failed", request->rkey);
-			evhttp_socket_send_error(request->evh_req, HTTP_NOTFOUND);
+			evhttp_socket_send_error(request->evh_req, request->thread_id, HTTP_NOTFOUND);
             goto free;
     }
     xret = 0;
@@ -1351,7 +1347,7 @@ redis_clnt_pdu_send(struct http_request *request)
         	X509_free(request->origin);
 		request_destroy(request);
         mesa_runtime_log(RLOG_LV_FATAL, MODULE_NAME, "Failed to sign certificate");
-		evhttp_socket_send_error(request->evh_req, HTTP_NOTFOUND);
+		evhttp_socket_send_error(request->evh_req, request->thread_id, HTTP_NOTFOUND);
 		return xret;
     }
 
@@ -1369,7 +1365,7 @@ redis_clnt_pdu_send(struct http_request *request)
     if (thread->sync == NULL)
 	{
         struct evhttp_request *evh_req = request->evh_req;
-		fp_stat_latency(request->create_time, KEYPAIR_ACTION_SIGN);
+		fp_stat_latency(request->create_time, request->thread_id, KEYPAIR_ACTION_SIGN);
         evhttp_socket_send(evh_req, request->odata);
         request_destroy(request);
         xret = 0;
@@ -1390,10 +1386,10 @@ static int redis_clnt_send(struct http_request *request, redisReply *reply)
     int xret                       = -1;
 
     if (!reply && !reply->str){
-		evhttp_socket_send_error(request->evh_req, HTTP_NOTFOUND);
+		evhttp_socket_send_error(request->evh_req, request->thread_id, HTTP_NOTFOUND);
         goto finish;
     }
-	fp_stat_latency(request->create_time, KEYPAIR_ACTION_SQL);
+	fp_stat_latency(request->create_time, request->thread_id, KEYPAIR_ACTION_SQL);
     evhttp_socket_send(request->evh_req, reply->str);
 
 finish:
@@ -1768,7 +1764,8 @@ void http_get_cb(struct evhttp_request *evh_req, void *arg)
 	{
 		goto error;
 	}
-	FS_operate(g_FP_instance.handle, g_FP_instance.line_ids[KEYPAIR_ACTION_REQ], 0, FS_OP_ADD, 1);
+
+	fieldstat_easy_counter_incrby(g_FP_instance.fieldstat, request->thread_id, g_FP_instance.column_ids[KEYPAIR_ACTION_REQ], NULL, 0, 1);
 
 	xret = get_keypair_cache(info, request, g_cert_store->mode);
 	if (xret >= 0)
@@ -1777,7 +1774,7 @@ void http_get_cb(struct evhttp_request *evh_req, void *arg)
 	}
 error:
 	request_destroy(request);
-	evhttp_socket_send_error(evh_req, HTTP_BADREQUEST);
+	evhttp_socket_send_error(evh_req, info->id, HTTP_BADREQUEST);
 finish:
     return;
 }
@@ -2143,47 +2140,22 @@ void sigproc(int __attribute__((__unused__))sig)
     exit(1);
 }
 
-static int kerying_fs_stat_init(const char *main_profile)
+int kerying_fieldstat_easy_create(const char *main_profile)
 {
-	int value=0, i=0, prometheus_port =0;
-	char stat_path[128] ={0}, pname[32]={0};
-	char prometheus_url_path[1024] = {0};
-    char statsd_server[32];	int statsd_port;
+	int cycle=0;
+	char app_name[256]={0};
+	char outpath[256]={0};
 
-    MESA_load_profile_int_def(main_profile, "stat", "statsd_port", &(statsd_port), 8126);
-	MESA_load_profile_string_def(main_profile, "stat", "statsd_server", statsd_server, sizeof(statsd_server), "");
-	MESA_load_profile_int_def(main_profile, "stat", "statsd_set_prometheus_port", &(prometheus_port), 9001);
-	MESA_load_profile_string_def(main_profile, "stat", "statsd_set_prometheus_url_path", prometheus_url_path, sizeof(prometheus_url_path), "/certstore_prometheus");
+	MESA_load_profile_string_def(main_profile, "STAT", "app_name", app_name, sizeof(app_name), "certstore");
+    MESA_load_profile_int_def(main_profile, "STAT", "cycle", &cycle, 2);
+    MESA_load_profile_string_def(main_profile, "STAT", "outpath", outpath, sizeof(outpath), "logs/certstore.fs4.json");
 
-	g_FP_instance.favorite=FS_CALC_CURRENT;
-	strcpy(g_FP_instance.histogram_bins, FP_HISTOGRAM_BINS);
-
-	FS_library_set_prometheus_port(prometheus_port);
-	FS_library_set_prometheus_url_path(prometheus_url_path);
-	FS_library_init();
-
-	screen_stat_handle_t fs=NULL;
-	fs=FS_create_handle();
-	rt_get_pname_by_pid(getpid(), &pname[0]);
-	FS_set_para(fs, APP_NAME, pname, strlen(pname)+1);
-	value=1;
-	FS_set_para(fs, OUTPUT_PROMETHEUS, &value, sizeof(value));
-	value=0;
-	FS_set_para(fs, FLUSH_BY_DATE, &value, sizeof(value));
-	snprintf(stat_path, 128, "%s/fs2_%s.status", "./logs", pname);
-	FS_set_para(fs, OUTPUT_DEVICE, stat_path, strlen(stat_path)+1);
-	value=1;
-	FS_set_para(fs, PRINT_MODE, &value, sizeof(value));
-	value=1;
-	FS_set_para(fs, CREATE_THREAD, &value, sizeof(value));
-	value=2;
-	FS_set_para(fs, STAT_CYCLE, &value, sizeof(value));
-	if(strlen(statsd_server)>0 && statsd_port!=0)
+	struct fieldstat_easy *fieldstat = fieldstat_easy_new(g_cert_store->thread_nu, app_name, NULL, 0);
+    if (fieldstat == NULL)
 	{
-		FS_set_para(fs, STATS_SERVER_IP, statsd_server, strlen(statsd_server)+1);
-		FS_set_para(fs, STATS_SERVER_PORT, &(statsd_port), sizeof(statsd_port));
-	}
-	FS_set_para(fs, HISTOGRAM_GLOBAL_BINS, g_FP_instance.histogram_bins, strlen(g_FP_instance.histogram_bins)+1);
+		mesa_runtime_log(RLOG_LV_INFO, MODULE_NAME, "certstore fieldstat4 easy instance init failed.");
+        return -1;
+    }
 
 	const char* __str_stat_spec_map[KEYPAIR_ACTION_MAX]={0};
 	__str_stat_spec_map[KEYPAIR_ACTION_REQ]="ask_kyr_req";
@@ -2191,22 +2163,23 @@ static int kerying_fs_stat_init(const char *main_profile)
 	__str_stat_spec_map[KEYPAIR_ACTION_SIGN]="x509_sign";
 	__str_stat_spec_map[KEYPAIR_ACTION_ERR]="ask_kyr_fail";
 
-	for (i = 0; i < KEYPAIR_ACTION_MAX; i++)
+	for (int i = 0; i < KEYPAIR_ACTION_MAX; i++)
 	{
-		g_FP_instance.line_ids[i] = FS_register(fs, FS_STYLE_FIELD, FS_CALC_CURRENT, __str_stat_spec_map[i]);
+		g_FP_instance.column_ids[i] = fieldstat_easy_register_counter(fieldstat, __str_stat_spec_map[i]);
 	}
-	FS_start(fs);
-	g_FP_instance.handle = fs;
 
-	for (i = 0; i <= KEYPAIR_ACTION_SIGN; i++)
+	for (int i = 0; i <= KEYPAIR_ACTION_SIGN; i++)
 	{
 		int size = strlen(__str_stat_spec_map[i]) + strlen("(us)");
 		char buff[size+1];
 		snprintf(buff,sizeof(buff),"%s(us)",(char*)__str_stat_spec_map[i]);
-		g_FP_instance.field_id[i]=FS_register_histogram(g_FP_instance.handle, g_FP_instance.favorite, buff,
-										  1, 30*1000,3);
+		g_FP_instance.histogram_column_ids[i] = fieldstat_easy_register_histogram(fieldstat, buff, 1, 500000, 1);
 	}
-    return 0;
+
+    fieldstat_easy_enable_auto_output(fieldstat, outpath, cycle);
+	g_FP_instance.fieldstat = fieldstat;
+
+	return 0;
 }
 
 char *keyring_get_value_string(cJSON *pxy_profile_keyring, const char *keyword)
@@ -2223,7 +2196,7 @@ char *keyring_get_value_string(cJSON *pxy_profile_keyring, const char *keyword)
 int keyring_get_value_number(cJSON *pxy_profile_keyring, const char *keyword)
 {
 	cJSON *item = cJSON_GetObjectItem(pxy_profile_keyring, keyword);
-	if(item==NULL && item->type!=cJSON_Number)
+	if(item==NULL || item->type!=cJSON_Number)
 	{
 		return -1;
 	}
@@ -2451,7 +2424,7 @@ finish:
 
 int cert_store_session_init(const char *main_profile)
 {
-    kerying_fs_stat_init(main_profile);
+    kerying_fieldstat_easy_create(main_profile);
 
     kerying_profile_init(main_profile);
 
