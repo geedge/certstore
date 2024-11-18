@@ -3,13 +3,14 @@ variables:
   BUILD_PADDING_PREFIX: /tmp/padding_for_CPACK_RPM_BUILD_SOURCE_DIRS_PREFIX_PREFIX_PREFIX_PREFIX_PREFIX_PREFIX/
   INSTALL_PREFIX: "/opt/tsg/certstore"
   TESTING_VERSION_BUILD: 0
-  BUILD_IMAGE_CENTOS8: "git.mesalab.cn:7443/mesa_platform/build-env:rockylinux"
+  BUILD_IMAGE_X86_64_EL8: "git.mesalab.cn:7443/mesa_platform/build-env:rockylinux"
+  BUILD_IMAGE_AARCH64_EL9: "git.mesalab.cn:7443/mesa_platform/build-env:rocky9-aarch64"
 
 stages:
 - build
 
 ###############################################################################
-# The script is set to el7 or el8
+# The script is set to el9 or el8
 ###############################################################################
 .build_before_script:
   before_script:
@@ -19,20 +20,29 @@ stages:
     - chmod +x ./ci/travis.sh
     - yum makecache
 
-.build_by_travis_for_centos8:
+.build_by_travis_for_x86_64_el8:
   stage: build
-  image: $BUILD_IMAGE_CENTOS8
+  image: $BUILD_IMAGE_X86_64_EL8
   extends: .build_before_script
   script:
     - ./ci/travis.sh
   tags:
     - share
 
+.build_by_travis_for_aarch64_el9:
+  stage: build
+  image: $BUILD_IMAGE_AARCH64_EL9
+  extends: .build_before_script
+  script:
+    - ./ci/travis.sh
+  tags:
+    - tsg-os-builder-aarch64
+
 ###############################################################################
 # compile use image: centos8
 ###############################################################################
-branch_build_debug_for_centos8:
-  extends: .build_by_travis_for_centos8
+branch_build_debug_for_x86_64_el8:
+  extends: .build_by_travis_for_x86_64_el8
   variables:
     BUILD_TYPE: Debug
   except:
@@ -40,17 +50,17 @@ branch_build_debug_for_centos8:
     - /^release-.*$/i
     - tags
 
-branch_build_release_for_centos8:
+branch_build_release_for_x86_64_el8:
   variables:
     BUILD_TYPE: RelWithDebInfo
-  extends: .build_by_travis_for_centos8
+  extends: .build_by_travis_for_x86_64_el8
   except:
     - /^develop-.*$/i
     - /^release-.*$/i
     - tags
 
-develop_build_debug_for_centos8:
-  extends: .build_by_travis_for_centos8
+develop_build_debug_for_x86_64_el8:
+  extends: .build_by_travis_for_x86_64_el8
   variables:
     TESTING_VERSION_BUILD: 1
     UPLOAD: 1
@@ -67,8 +77,8 @@ develop_build_debug_for_centos8:
     - /^develop-.*$/i
     - /^release-.*$/i
 
-develop_build_release_for_centos8:
-  extends: .build_by_travis_for_centos8
+develop_build_release_for_x86_64_el8:
+  extends: .build_by_travis_for_x86_64_el8
   variables:
     TESTING_VERSION_BUILD: 1
     UPLOAD: 1
@@ -85,7 +95,7 @@ develop_build_release_for_centos8:
     - /^develop-.*$/i
     - /^release-.*$/i
 
-release_build_debug_for_centos8:
+release_build_debug_for_x86_64_el8:
   variables:
     UPLOAD: 1
     BUILD_TYPE: Debug
@@ -93,7 +103,7 @@ release_build_debug_for_centos8:
     SYMBOL_TARGET: certstore
     PULP3_REPO_NAME: tsg-stable-x86_64.el8
     PULP3_DIST_NAME: tsg-stable-x86_64.el8
-  extends: .build_by_travis_for_centos8
+  extends: .build_by_travis_for_x86_64_el8
   artifacts:
     name: "certstore-$CI_COMMIT_REF_NAME-debug"
     paths:
@@ -101,7 +111,7 @@ release_build_debug_for_centos8:
   only:
     - tags
 
-release_build_release_for_centos8:
+release_build_release_for_x86_64_el8:
   variables:
     BUILD_TYPE: RelWithDebInfo
     UPLOAD: 1
@@ -109,7 +119,7 @@ release_build_release_for_centos8:
     SYMBOL_TARGET: certstore
     PULP3_REPO_NAME: tsg-stable-x86_64.el8
     PULP3_DIST_NAME: tsg-stable-x86_64.el8
-  extends: .build_by_travis_for_centos8
+  extends: .build_by_travis_for_x86_64_el8
   artifacts:
     name: "certstore-$CI_COMMIT_REF_NAME-release"
     paths:
@@ -117,3 +127,90 @@ release_build_release_for_centos8:
   only:
     - tags
     
+###############################################################################
+# compile for el9
+###############################################################################
+branch_build_debug_for_aarch64_el9:
+  extends: .build_by_travis_for_aarch64_el9
+  variables:
+    BUILD_TYPE: Debug
+  except:
+    - /^develop.*$/i
+    - /^release.*$/i
+    - tags
+
+branch_build_release_for_aarch64_el9:
+  variables:
+    BUILD_TYPE: RelWithDebInfo
+  extends: .build_by_travis_for_aarch64_el9
+  except:
+    - /^develop.*$/i
+    - /^release.*$/i
+    - tags
+
+develop_build_debug_for_aarch64_el9:
+  extends: .build_by_travis_for_aarch64_el9
+  variables:
+    BUILD_TYPE: Debug
+    PACKAGE: 1
+    UPLOAD: 1
+    ASAN_OPTION: ADDRESS
+    TESTING_VERSION_BUILD: 1
+    PULP3_REPO_NAME: tsg-testing-aarch64.el9
+    PULP3_DIST_NAME: tsg-testing-aarch64.el9
+  artifacts:
+    name: "certstore-$CI_COMMIT_REF_NAME-debug"
+    paths:
+      - build/*.rpm
+  only:
+    - /^develop.*$/i
+    - /^release.*$/i
+
+develop_build_release_for_aarch64_el9:
+  extends: .build_by_travis_for_aarch64_el9
+  variables:
+    BUILD_TYPE: RelWithDebInfo
+    PACKAGE: 1
+    UPLOAD: 1
+    TESTING_VERSION_BUILD: 1
+    PULP3_REPO_NAME: tsg-testing-aarch64.el9
+    PULP3_DIST_NAME: tsg-testing-aarch64.el9
+  artifacts:
+    name: "certstore-$CI_COMMIT_REF_NAME-release"
+    paths:
+      - build/*.rpm
+  only:
+    - /^develop.*$/i
+    - /^release.*$/i
+
+release_build_debug_for_aarch64_el9:
+  variables:
+    BUILD_TYPE: Debug
+    PACKAGE: 1
+    UPLOAD: 1
+    PULP3_REPO_NAME: tsg-stable-aarch64.el9
+    PULP3_DIST_NAME: tsg-stable-aarch64.el9
+  extends: .build_by_travis_for_aarch64_el9
+  artifacts:
+    name: "certstore-$CI_COMMIT_REF_NAME-release"
+    paths:
+      - build/*.rpm
+  only:
+    - tags
+
+release_build_release_for_aarch64_el9:
+  variables:
+    BUILD_TYPE: RelWithDebInfo
+    PACKAGE: 1
+    UPLOAD: 1
+    UPLOAD_SYMBOL_FILES: 1
+    SYMBOL_TARGET: certstore
+    PULP3_REPO_NAME: tsg-stable-aarch64.el9
+    PULP3_DIST_NAME: tsg-stable-aarch64.el9
+  extends: .build_by_travis_for_aarch64_el9
+  artifacts:
+    name: "certstore-$CI_COMMIT_REF_NAME-release"
+    paths:
+      - build/*.rpm
+  only:
+    - tags

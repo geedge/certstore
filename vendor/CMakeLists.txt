@@ -3,10 +3,16 @@
 include(ExternalProject)
 
 ### OpenSSL 1.1.1
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64") 
+    set(OPENSSL_CONFIGURE_TARGET "linux-x86_64") 
+else() 
+    set(OPENSSL_CONFIGURE_TARGET "linux-generic64") 
+endif()
+
 ExternalProject_Add(OpenSSL PREFIX openssl
         URL ${CMAKE_CURRENT_SOURCE_DIR}/openssl-1.1.1.tar.gz
         URL_MD5 d65944e4aa4de6ad9858e02c82d85183
-        CONFIGURE_COMMAND ./Configure enable-ssl3 enable-ssl3-method enable-weak-ssl-ciphers linux-x86_64 --prefix=<INSTALL_DIR> --openssldir=<INSTALL_DIR>/lib/ssl
+        CONFIGURE_COMMAND ./Configure enable-ssl3 enable-ssl3-method enable-weak-ssl-ciphers ${OPENSSL_CONFIGURE_TARGET} --prefix=<INSTALL_DIR> --openssldir=<INSTALL_DIR>/lib/ssl
 							enable-ec_nistp_64_gcc_128 no-shared
 		BUILD_COMMAND ${MAKE_COMMAND}
 		INSTALL_COMMAND make install_sw
@@ -47,21 +53,22 @@ set_property(TARGET libevent-static PROPERTY IMPORTED_LOCATION ${INSTALL_DIR}/li
 set_property(TARGET libevent-static PROPERTY IMPORTED_INTERFACE_LINK_LIBRARIES pthread crypto)
 set_property(TARGET libevent-static PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${INSTALL_DIR}/include)
 
-### hiredis
+# hiredis-1.1.0
 ExternalProject_Add(hiredis PREFIX hiredis
-        URL ${CMAKE_CURRENT_SOURCE_DIR}/hiredis-v0.14.0.tar.gz
-		URL_MD5 b2c1b014d7bc7cf5ac3b64cc25359a78
-		CONFIGURE_COMMAND ""
-		BUILD_COMMAND make
-        BUILD_IN_SOURCE 1)
-		
+                    URL ${CMAKE_CURRENT_SOURCE_DIR}/hiredis-1.1.0.tar.gz
+		            CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR> -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_C_FLAGS="-fPIC")
+
 ExternalProject_Get_Property(hiredis INSTALL_DIR)
 file(MAKE_DIRECTORY ${INSTALL_DIR}/include)
 
 add_library(hiredis-static STATIC IMPORTED GLOBAL)
 add_dependencies(hiredis-static hiredis)
-set_property(TARGET hiredis-static PROPERTY IMPORTED_LOCATION ${INSTALL_DIR}/lib/libhiredis.a)
 set_property(TARGET hiredis-static PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${INSTALL_DIR}/include)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+set_property(TARGET hiredis-static  PROPERTY IMPORTED_LOCATION ${INSTALL_DIR}/lib64/libhiredisd.a)
+else()
+set_property(TARGET hiredis-static  PROPERTY IMPORTED_LOCATION ${INSTALL_DIR}/lib64/libhiredis.a)
+endif()
 
 #### GoogleTest
 ExternalProject_Add(googletest PREFIX googletest

@@ -34,7 +34,7 @@ env | sort
 
 # Install dependency from YUM
 
-yum install -y libcjson-devel libmaatframe-devel libfieldstat4-devel libMESA_handle_logger-devel libbreakpad_mini-devel.x86_64 libMESA_prof_load-devel libuuid-devel
+yum install -y libcjson-devel libmaatframe-devel libfieldstat4-devel libMESA_handle_logger-devel libbreakpad_mini-devel libMESA_prof_load-devel libuuid-devel perl
 
 mkdir build || true
 cd build

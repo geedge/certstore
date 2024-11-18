@@ -36,14 +36,15 @@
 #include <event2/http.h>
 #include <event2/buffer.h>
 
-#include <async.h>
+#include <hiredis/async.h>
+#include <hiredis/adapters/libevent.h>
 #include <MESA/maat.h>
 #include <fieldstat/fieldstat_easy.h>
 #include <MESA/MESA_prof_load.h>
 #include <MESA/cJSON.h>
 
 #include "cert_store.h"
-#include "libevent.h"
+#include "event.h"
 #include "cert_session.h"
 #include "logging.h"
 
